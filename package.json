@@ -1,14 +1,25 @@
 {
   "name": "muraqib",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "AI-driven DevSecOps CLI tool for vulnerability monitoring",
+  "type": "module",  "main": "index.js",
   "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jenan04/pre-muraqib.git"
+  },
+  "keywords": ["cli", "devsecops", "security", "vulnerability-detector"],
   "author": "",
   "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Jenan04/pre-muraqib/issues"
+  },
+  "homepage": "https://github.com/Jenan04/pre-muraqib#readme",
   "packageManager": "pnpm@10.29.2",
   "dependencies": {
     "@clack/prompts": "^1.4.0"
