@@ -1,5 +1,6 @@
 import * as x from "@clack/prompts"; // import * => select(), intro(), outro(), spinner(), confirm(), note(), isCancel()
 import { styleText, parseArgs } from "node:util";
+import { parseEnvFile } from "./parser";
 
 async function main() {
   console.clear();
@@ -7,8 +8,8 @@ async function main() {
   const { values } = parseArgs({
     options: {
       env: {
-        type: 'string',
-        short: 'e',
+        type: "string",
+        short: "e",
       },
     },
     strict: false,
@@ -47,16 +48,65 @@ async function main() {
   const s = x.spinner();
   s.start("Analyzing configuration files...");
 
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  const targetFile = ".env.test";
+  let auditResult;
 
-  s.stop("Analysis complete!");
+  try {
+    auditResult = parseEnvFile(targetFile);
+    s.stop("Analysis complete!");
+  } catch (error: any) {
+    s.stop("Analysis failed!");
+    x.log.error(`${styleText("red", "Error:")} ${error.message}`);
+    process.exit(1);
+  }
 
-  x.note(
-    `• Target Environment: ${styleText("cyan", String(mode))}\n• Status: ${styleText("green", "Ready to implement scanning logic.")}`,
-    "Audit Summary (Playground)",
-  );
+  const { parsedLines, issues } = auditResult;
 
-  x.outro(styleText("dim", "Stay secure! ✨"));
+  if (issues.length > 0) {
+    x.log.warn(
+      styleText(
+        "yellow",
+        `Found ${issues.length} issue(s) in your configuration:`,
+      ),
+    );
+    console.log("");
+
+    issues.forEach((issue) => {
+      const isError = issue.severity === "error";
+      const badgeColor = isError ? ["bgRed", "white"] : ["bgYellow", "black"];
+      const badgeText = isError ? " ERROR " : " WARN  ";
+
+      const prefix = `${styleText(badgeColor as any, badgeText)} ${styleText("dim", `Line ${issue.line}:`)}`;
+
+      console.log(`  ${prefix} ${issue.message}`);
+    });
+
+    console.log("");
+  }
+
+  const hasErrors = issues.some((i) => i.severity === "error");
+
+  let summaryContent = `• Target File: ${styleText("cyan", targetFile)}\n`;
+  summaryContent += `• Target Environment: ${styleText("cyan", String(mode))}\n`;
+  summaryContent += `• Valid Variables Parsed: ${styleText("green", String(parsedLines.length))}\n`;
+
+  if (issues.length === 0) {
+    summaryContent += `• Status: ${styleText("green", "✔ Clean & Secure Syntax")}`;
+  } else {
+    summaryContent += `• Status: ${hasErrors ? styleText("red", "✖ Fix required before deployment") : styleText("yellow", "⚠ Code health warnings detected")}`;
+  }
+
+  x.note(summaryContent, "Audit Summary");
+
+  if (hasErrors) {
+    x.outro(
+      styleText("red", "Muraqib scan failed. Please resolve errors above. ❌"),
+    );
+    process.exit(1);
+  } else {
+    x.outro(styleText("green", "Stay secure! ✨"));
+    process.exit(0);
+  }
 }
 
 main().catch((err) => {
