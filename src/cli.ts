@@ -140,10 +140,26 @@ async function main() {
     });
     console.log("");
 
+    //   if (process.env.GEMINI_API_KEY) {
+    //     await generateFixRecommendations(npmIssues);
+    //   }
+
+    // } else if (fs.existsSync("package.json")) {
     if (process.env.GEMINI_API_KEY) {
-      await generateFixRecommendations(npmIssues);
+      try {
+        const packageJsonRaw = fs.readFileSync("package.json", "utf8");
+        const packageJson = JSON.parse(packageJsonRaw);
+
+        const allDependencies = {
+          ...(packageJson.dependencies || {}),
+          ...(packageJson.devDependencies || {}),
+        };
+
+        await generateFixRecommendations(npmIssues, allDependencies);
+      } catch (e) {
+        await generateFixRecommendations(npmIssues, {});
+      }
     }
-    
   } else if (fs.existsSync("package.json")) {
     x.log.success(
       styleText(
