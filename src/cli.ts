@@ -3,6 +3,7 @@ import { styleText, parseArgs } from "node:util";
 import { parseEnvFile } from "./core/EnvParser.js";
 import { NpmParser } from "./core/NpmParser.js";
 import * as fs from "node:fs";
+import { generateFixRecommendations } from "./core/AiAdvisor.js";
 
 async function main() {
   console.clear();
@@ -85,6 +86,8 @@ async function main() {
         line: 0,
         severity: "error",
         message: error.message,
+        // message: `Package [${packageName}@${actualVersion}] has...`,
+        // key: packageName,
       });
     }
   });
@@ -136,6 +139,11 @@ async function main() {
       console.log(`  ${prefix} ${issue.message}`);
     });
     console.log("");
+
+    if (process.env.GEMINI_API_KEY) {
+      await generateFixRecommendations(npmIssues);
+    }
+    
   } else if (fs.existsSync("package.json")) {
     x.log.success(
       styleText(

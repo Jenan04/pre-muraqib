@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import path from "path";
 import https from "node:https";
 import type { syntaxIssue } from "../types/interface.js";
-import { osvConfig } from '../config/osv.config.js'
+import { osvConfig } from "../config/osv.config.js";
 function makeOsvRequest(
   actualVersion: string,
   packageName: string,
@@ -92,6 +92,33 @@ export async function NpmParser(fileparser: string) {
           const foundLineIndex = allLines.findIndex((line) =>
             line.includes(`"${packageName}"`),
           );
+
+          let safeVersion = "latest secure version";
+          const firstVuln = data.vulns[0];
+
+          if (firstVuln.affected && firstVuln.affected.length > 0) {
+            const ranges = firstVuln.affected[0].ranges;
+
+            if (ranges && ranges.length > 0) {
+              const ecosystemRange = ranges.find(
+                (r: any) => r.type === "ECOSYSTEM",
+              );
+
+              if (ecosystemRange && ecosystemRange.events) {
+                const fixedEvent = ecosystemRange.events.find(
+                  (e: any) =>
+                    e.fixed &&
+                    !e.fixed.includes("-beta") &&
+                    !e.fixed.includes("-rc") &&
+                    !e.fixed.includes("-alpha"),
+                );
+
+                if (fixedEvent && fixedEvent.fixed) {
+                  safeVersion = fixedEvent.fixed;
+                }
+              }
+            }
+          }
           const realLineNum = foundLineIndex !== -1 ? foundLineIndex + 1 : 0;
 
           const totalVulns = data.vulns.length;
@@ -100,7 +127,8 @@ export async function NpmParser(fileparser: string) {
             line: realLineNum,
             type: "syntax",
             severity: "error",
-            message: `Package [${packageName}@${actualVersion}] has ${totalVulns} known vulnerabilities. Fix configuration or upgrade to a secure version immediately.`,
+            // message: `Package [${packageName}@${actualVersion}] has ${totalVulns} known vulnerabilities. Fix configuration or upgrade to a secure version immediately.`,
+            message: `Package [${packageName}] is using an insecure version (${actualVersion}). Found ${totalVulns} vulnerabilities. Remediation: Upgrade to version [${safeVersion}] or higher.`,
             key: packageName,
           });
         }
