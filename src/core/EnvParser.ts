@@ -5,8 +5,6 @@ export function parseEnvFile(filePath: string) {
   const parsedLines: parsedLine[] = [];
   const issues: syntaxIssue[] = [];
   const seenKeys = new Set<string>();
-  // Set is a built in object that has a `has()` method , it search inside the collection with constant complexity O(1) (hash table)
-  // seenKeys.has(key)
 
   if (!fs.existsSync(filePath)) {
     throw new Error(`Target file not found at: ${filePath}`);
@@ -16,13 +14,10 @@ export function parseEnvFile(filePath: string) {
   const allLines = content.split("\n");
 
   const VALID_LINE_REGEX = /^\s*([a-zA-Z_][\w]*)\s*=\s*(.*)?\s*$/;
-  // \s* => 0 or more than spaces
-  // first letter should be re;ated to [a-zA-Z_]
-  // [\w] word char(any letter, number, _)
 
-  allLines.forEach((content, index) => {
+  allLines.forEach((lineContent, index) => {
     const lineNum = index + 1;
-    const trimmed = content.trim();
+    const trimmed = lineContent.trim();
 
     if (!trimmed || trimmed.startsWith("#")) {
       return;
@@ -54,11 +49,38 @@ export function parseEnvFile(filePath: string) {
     const key = match[1];
     let value = match[2] ? match[2].trim() : "";
 
-    if (
+    if (value.includes("#")) {
+      value = value.split("#")[0].trim();
+    }
+
+    const startsWithQuote = value.startsWith('"') || value.startsWith("'");
+    const endsWithQuote = value.endsWith('"') || value.endsWith("'");
+    const matchesPerfect =
       (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1).trim();
+      (value.startsWith("'") && value.endsWith("'"));
+
+    if (startsWithQuote || endsWithQuote) {
+      if (!matchesPerfect) {
+        issues.push({
+          line: lineNum,
+          type: "syntax",
+          severity: "error",
+          message: "Malformed value: Unmatched or missing quotes around the variable value.",
+        });
+        return; 
+      } else {
+        value = value.slice(1, -1).trim();
+      }
+    } else {
+      if (value.includes(" ")) {
+        issues.push({
+          line: lineNum,
+          type: "syntax",
+          severity: "error",
+          message: `Malformed value: Values with spaces must be enclosed in quotes (e.g., KEY="value with spaces").`,
+        });
+        return;
+      }
     }
 
     if (seenKeys.has(key)) {
@@ -72,7 +94,6 @@ export function parseEnvFile(filePath: string) {
     } else {
       seenKeys.add(key);
     }
-
 
     parsedLines.push({
       line: lineNum,

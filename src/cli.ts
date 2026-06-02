@@ -1,6 +1,8 @@
-import * as x from "@clack/prompts"; // import * => select(), intro(), outro(), spinner(), confirm(), note(), isCancel()
+import * as x from "@clack/prompts";
 import { styleText, parseArgs } from "node:util";
-import { parseEnvFile } from "./parser";
+import { parseEnvFile } from "./core/EnvParser.js";
+import { NpmParser } from "./core/NpmParser.js";
+import * as fs from "node:fs";
 
 async function main() {
   console.clear();
@@ -16,7 +18,7 @@ async function main() {
   });
 
   x.intro(
-    `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config Auditor")}`,
+    `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config & Dependency Auditor")}`,
   );
 
   let mode = values.env;
@@ -44,72 +46,137 @@ async function main() {
       process.exit(0);
     }
   }
-  // fake spinner for now
-  const s = x.spinner();
-  s.start("Analyzing configuration files...");
 
-  const targetFile = ".env.test";
-  let auditResult;
+  const sEnv = x.spinner();
+  sEnv.start("📋 Scanning all configuration (.env) files...");
 
-  try {
-    auditResult = parseEnvFile(targetFile);
-    s.stop("Analysis complete!");
-  } catch (error: any) {
-    s.stop("Analysis failed!");
-    x.log.error(`${styleText("red", "Error:")} ${error.message}`);
+  const targetFiles = fs
+    .readdirSync(".")
+    .filter((file) => file.startsWith(".env"));
+
+  if (targetFiles.length === 0) {
+    sEnv.stop("Scan failed!");
+    x.log.error(styleText("red", "No .env files found in the root directory."));
     process.exit(1);
   }
 
-  const { parsedLines, issues } = auditResult;
+  let totalParsedLines = 0;
+  let envIssues: {
+    fileName: string;
+    line: number;
+    severity: string;
+    message: string;
+  }[] = [];
 
-  if (issues.length > 0) {
+  targetFiles.forEach((file) => {
+    try {
+      const result = parseEnvFile(file);
+      totalParsedLines += result.parsedLines.length;
+
+      result.issues.forEach((issue) => {
+        envIssues.push({
+          fileName: file,
+          ...issue,
+        });
+      });
+    } catch (error: any) {
+      envIssues.push({
+        fileName: file,
+        line: 0,
+        severity: "error",
+        message: error.message,
+      });
+    }
+  });
+
+  sEnv.stop("Configuration analysis complete!");
+
+  if (envIssues.length > 0) {
     x.log.warn(
       styleText(
         "yellow",
-        `Found ${issues.length} issue(s) in your configuration:`,
+        `Found ${envIssues.length} issue(s) in your .env files:`,
       ),
     );
-    console.log("");
-
-    issues.forEach((issue) => {
+    envIssues.forEach((issue) => {
       const isError = issue.severity === "error";
       const badgeColor = isError ? ["bgRed", "white"] : ["bgYellow", "black"];
       const badgeText = isError ? " ERROR " : " WARN  ";
-
-      const prefix = `${styleText(badgeColor as any, badgeText)} ${styleText("dim", `Line ${issue.line}:`)}`;
-
+      const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
+      const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
       console.log(`  ${prefix} ${issue.message}`);
     });
-
     console.log("");
   }
 
-  const hasErrors = issues.some((i) => i.severity === "error");
+  const sNpm = x.spinner();
+  sNpm.start("📦 Scanning dependencies for known vulnerabilities (OSV API)...");
 
-  let summaryContent = `• Target File: ${styleText("cyan", targetFile)}\n`;
-  summaryContent += `• Target Environment: ${styleText("cyan", String(mode))}\n`;
-  summaryContent += `• Valid Variables Parsed: ${styleText("green", String(parsedLines.length))}\n`;
+  let npmIssues: any[] = [];
 
-  if (issues.length === 0) {
-    summaryContent += `• Status: ${styleText("green", "✔ Clean & Secure Syntax")}`;
+  if (fs.existsSync("package.json")) {
+    const npmResult = await NpmParser("package.json");
+    npmIssues = npmResult.issues;
+    sNpm.stop("Dependency vulnerability analysis complete!");
+  } else {
+    sNpm.stop("Skipped!");
+    x.log.info("No package.json found, skipping dependency scan.");
+  }
+
+  if (npmIssues.length > 0) {
+    x.log.error(
+      styleText(
+        "red",
+        `🚨 Security Alert: Found ${npmIssues.length} vulnerability issues:`,
+      ),
+    );
+    npmIssues.forEach((issue) => {
+      const fileAndLine = `${styleText("cyan", "package.json")}:${styleText("dim", String(issue.line))}`;
+      const prefix = `${styleText(["bgRed", "white"], " VULN  ")} [${fileAndLine}]`;
+      console.log(`  ${prefix} ${issue.message}`);
+    });
+    console.log("");
+  } else if (fs.existsSync("package.json")) {
+    x.log.success(
+      styleText(
+        "green",
+        "✔ All dependencies are secure. No known vulnerabilities found!",
+      ),
+    );
+    console.log("");
+  }
+
+  const totalIssuesCount = envIssues.length + npmIssues.length;
+  const hasErrors =
+    envIssues.some((i) => i.severity === "error") || npmIssues.length > 0;
+
+  let summaryContent = `• Scanned Env Files: ${styleText("cyan", targetFiles.join(", "))}\n`;
+  summaryContent += `• Total Valid Env Variables: ${styleText("green", String(totalParsedLines))}\n`;
+  summaryContent += `• Checked NPM Packages: ${styleText("cyan", "Active on Disk")}\n`;
+
+  if (totalIssuesCount === 0) {
+    summaryContent += `• Status: ${styleText("green", "✔ Clean, Secure Syntax & Safe Dependencies")}`;
   } else {
     summaryContent += `• Status: ${hasErrors ? styleText("red", "✖ Fix required before deployment") : styleText("yellow", "⚠ Code health warnings detected")}`;
   }
 
-  x.note(summaryContent, "Audit Summary");
+  x.note(summaryContent, "Muraqib Audit Summary");
 
   if (hasErrors) {
     x.outro(
-      styleText("red", "Muraqib scan failed. Please resolve errors above. ❌"),
+      styleText(
+        "red",
+        "Muraqib scan failed. Please resolve the security/syntax errors above. ❌",
+      ),
     );
     process.exit(1);
   } else {
-    x.outro(styleText("green", "Stay secure! ✨"));
+    x.outro(styleText("green", "Everything looks secure! Stay safe! ✨"));
     process.exit(0);
   }
 }
 
 main().catch((err) => {
-  console.error("An error occurred:", err);
+  console.error("An error occurred during Muraqib execution:", err);
   process.exit(1);
 });
