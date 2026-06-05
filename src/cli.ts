@@ -110,6 +110,14 @@ async function main() {
       console.log(`  ${prefix} ${issue.message}`);
     });
     console.log("");
+  } else {
+    x.log.success(
+      styleText(
+        "green",
+        "✔ Environment configurations are clean. No syntax errors or leaks found!",
+      ),
+    );
+    console.log("");
   }
 
   const sNpm = x.spinner();
