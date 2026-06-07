@@ -29,11 +29,31 @@
   "packageManager": "pnpm@10.29.2",
   "dependencies": {
     "@clack/prompts": "1.4.0",
-    "@google/genai": "2.7.0"
+    "@google/genai": "2.7.0",
+    "axios": "0.21.1"
   },
   "devDependencies": {
     "@types/node": "24.0.0",
+    "arktype": "^2.0.0-rc.26",
     "tsx": "4.22.3",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "valibot": "^0.31.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "arktype": "^2.x",
+    "valibot": "^0.x",
+    "zod": "^3.x"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    },
+    "valibot": {
+      "optional": true
+    },
+    "arktype": {
+      "optional": true
+    }
   }
 }

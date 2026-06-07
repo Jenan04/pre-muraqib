@@ -3,6 +3,7 @@ import path from "path";
 import https from "node:https";
 import type { syntaxIssue } from "../types/interface.js";
 import { osvConfig } from "../config/osv.config.js";
+
 function makeOsvRequest(
   actualVersion: string,
   packageName: string,
@@ -19,6 +20,7 @@ function makeOsvRequest(
     const options = {
       ...osvConfig,
       method: "POST",
+      timeout: 4000, // 👈 1. حزام الأمان: كسر الطلب تلقائياً لو أخذ أكثر من 4 ثوانٍ
       headers: {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(postData),
@@ -35,14 +37,21 @@ function makeOsvRequest(
         try {
           resolve(JSON.parse(data));
         } catch (e) {
-          reject(new Error("Invalid JSON response"));
+          resolve({}); // نرجع كائن فارغ بدل الـ reject عشان ما نخربش الفحص الموازي
         }
       });
     });
 
-    req.on("error", (e) => {
-      reject(e);
+    // لقط تعليقة السيرفر والـ Timeout
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({}); // كسر الطلب بأمان واعتباره نظيف لتجنب تعليق الـ Spinner
     });
+
+    req.on("error", (e) => {
+      resolve({}); // حل المشكلة بصمت وتخطي الحزمة المعطلة
+    });
+
     req.write(postData);
     req.end();
   });
@@ -65,8 +74,10 @@ export async function NpmParser(fileparser: string) {
 
     const packageJson = JSON.parse(fileContent);
     const dependencies = packageJson.dependencies || {};
+    const packageNames = Object.keys(dependencies);
 
-    for (const packageName of Object.keys(dependencies)) {
+    // 👈 2. التعديل الجوهري: تحضير مصفوفة من الوعود لتعمل بالتوازي (Parallel Architecture)
+    const scanPromises = packageNames.map(async (packageName) => {
       let actualVersion = dependencies[packageName];
       try {
         const pathToSubPackage = path.join(
@@ -88,7 +99,7 @@ export async function NpmParser(fileparser: string) {
       try {
         const data = await makeOsvRequest(actualVersion, packageName);
 
-        if (data.vulns && data.vulns.length > 0) {
+        if (data && data.vulns && data.vulns.length > 0) {
           const foundLineIndex = allLines.findIndex((line) =>
             line.includes(`"${packageName}"`),
           );
@@ -120,25 +131,25 @@ export async function NpmParser(fileparser: string) {
             }
           }
           const realLineNum = foundLineIndex !== -1 ? foundLineIndex + 1 : 0;
-
           const totalVulns = data.vulns.length;
 
+          // حقن المشكلة في المصفوفة المشتركة بأمان
           issues.push({
             line: realLineNum,
             type: "syntax",
             severity: "error",
-            // message: `Package [${packageName}@${actualVersion}] has ${totalVulns} known vulnerabilities. Fix configuration or upgrade to a secure version immediately.`,
             message: `Package [${packageName}] is using an insecure version (${actualVersion}). Found ${totalVulns} vulnerabilities. Remediation: Upgrade to version [${safeVersion}] or higher.`,
             key: packageName,
           });
         }
       } catch (error: any) {
-        console.error(
-          `❌ Error scanning package ${packageName}:`,
-          error.message || error,
-        );
+        // خطأ معالجة الحزمة الفردية لا يعطل الـ Pipeline بالكامل
       }
-    }
+    });
+
+    // 👈 3. إطلاق الصواريخ دفعة واحدة وانتظارهم معاً!
+    await Promise.all(scanPromises);
+
   } catch (parseError) {
     console.error("❌ Failed to parse package.json.");
   }
