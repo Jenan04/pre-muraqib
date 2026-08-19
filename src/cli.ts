@@ -120,44 +120,104 @@ async function main() {
   
   // 🚀 التعديل الجوهري: تم إلغاء فحص hasSyntaxErrors لكي يعمل الفاليديشن والسنتناكس معاً دائماً
   if (Object.keys(accumulatedCleanEnv).length > 0) {
-    const sGuard = x.spinner();
-    sGuard.start("🛡️ Guarding environment logic and cloud presets...");
+    // const sGuard = x.spinner();
+    // sGuard.start("🛡️ Guarding environment logic and cloud presets...");
 
-    try {
-      // استدعاء دالة الفحص
-      await createEnv({
-        extends: ["vercel", "neon", "supabase"], 
-        runtimeEnvStrict: accumulatedCleanEnv, 
-        emptyStringAsUndefined: true,
-      });
+    // try {
+    //   // استدعاء دالة الفحص
+    //   await createEnv({
+    //     extends: ["vercel", "neon", "supabase"], 
+    //     runtimeEnvStrict: accumulatedCleanEnv, 
+    //     emptyStringAsUndefined: true,
+    //   });
 
-      sGuard.stop("Cloud presets and semantic validations passed!");
-    } catch (validationError: any) {
-      sGuard.stop("Validation issues detected in configuration values!");
+    //   sGuard.stop("Cloud presets and semantic validations passed!");
+    // } catch (validationError: any) {
+    //   sGuard.stop("Validation issues detected in configuration values!");
       
-      if (validationError && validationError.errors && Array.isArray(validationError.errors)) {
-        validationError.errors.forEach((err: any) => {
-          const fieldPath = err.path ? err.path.join('.') : 'UNKNOWN';
+    //   if (validationError && validationError.errors && Array.isArray(validationError.errors)) {
+    //     validationError.errors.forEach((err: any) => {
+    //       const fieldPath = err.path ? err.path.join('.') : 'UNKNOWN';
           
-          // 🚀 استدعاء رقم السطر والملف الحقيقيين من الـ Registry بأمان تام وبدون مشاكل Scope
-          const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
+    //       // 🚀 استدعاء رقم السطر والملف الحقيقيين من الـ Registry بأمان تام وبدون مشاكل Scope
+    //       const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
 
-          envIssues.push({
-            fileName: meta.fileName, 
-            line: meta.line, 
-            severity: "error",
-            message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
-          });
-        });
-      } else {
-        envIssues.push({
-          fileName: ".env",
-          line: 0,
-          severity: "error",
-          message: validationError?.message || String(validationError),
-        });
-      }
-    }
+    //       envIssues.push({
+    //         fileName: meta.fileName, 
+    //         line: meta.line, 
+    //         severity: "error",
+    //         message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
+    //       });
+    //     });
+    //   } else {
+    //     envIssues.push({
+    //       fileName: ".env",
+    //       line: 0,
+    //       severity: "error",
+    //       message: validationError?.message || String(validationError),
+    //     });
+    //   }
+    // }
+    const sGuard = x.spinner();
+sGuard.start("🛡️ Guarding environment logic and cloud presets...");
+
+try {
+  const guardResult = await createEnv({
+    runtimeEnvStrict: accumulatedCleanEnv,
+    emptyStringAsUndefined: true,
+  });
+
+  sGuard.stop(
+    `Semantic validations passed! ${styleText("dim", `[engine: ${guardResult.engine}]`)}`
+  );
+
+  // ✅ تمرير الـ unknownKeys للـ AI لو موجود
+  if (guardResult.unknownKeys.length > 0 && process.env.GEMINI_API_KEY) {
+    const { analyzeUnknownVariablesWithAi } = await import("./aiFallback.js");
+    const aiErrors = await analyzeUnknownVariablesWithAi(
+      guardResult.unknownKeys,
+      accumulatedCleanEnv
+    );
+
+    aiErrors.forEach((err) => {
+      const fieldPath = err.path?.[0] ?? "UNKNOWN";
+      const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
+      envIssues.push({
+        fileName: meta.fileName,
+        line: meta.line,
+        severity: "error",
+        message: `[AI Analysis] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
+      });
+    });
+  }
+
+} catch (validationError: any) {
+  const engine = validationError?.engine ?? "custom";
+  sGuard.stop(
+    `Validation issues detected! ${styleText("dim", `[engine: ${engine}]`)}`
+  );
+
+  if (validationError?.errors && Array.isArray(validationError.errors)) {
+    validationError.errors.forEach((err: any) => {
+      const fieldPath = err.path ? err.path.join(".") : "UNKNOWN";
+      const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
+
+      envIssues.push({
+        fileName: meta.fileName,
+        line: meta.line,
+        severity: "error",
+        message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
+      });
+    });
+  } else {
+    envIssues.push({
+      fileName: ".env",
+      line: 0,
+      severity: "error",
+      message: validationError?.message || String(validationError),
+    });
+  }
+}
   }
 
   // عرض المشاكل المجمعة (سنتاكس + سيمانتيك)
