@@ -5,6 +5,9 @@ import { NpmParser } from "./core/NpmParser.js";
 import * as fs from "node:fs";
 import { generateFixRecommendations } from "./core/AiAdvisor.js";
 
+// 🛡️ استيراد محرك فحص البيئات من مجلد guard الجديد
+import { createEnv } from "./guard/EnvValidator.js";
+
 async function main() {
   console.clear();
 
@@ -48,6 +51,9 @@ async function main() {
     }
   }
 
+  // =========================================================================
+  // المرحلة 1: الـ Syntax Parser (شغل جنان العبقري)
+  // =========================================================================
   const sEnv = x.spinner();
   sEnv.start("📋 Scanning all configuration (.env) files...");
 
@@ -69,10 +75,26 @@ async function main() {
     message: string;
   }[] = [];
 
+  // كائن لتجميع البيانات النظيفة لتمريرها للمرحلة القادمة
+  let accumulatedCleanEnv: Record<string, string> = {};
+
+  // 🚀 خريطة ذكية لحفظ مرجع: [المفتاح] -> { اسم الملف، رقم السطر الحقيقي }
+  const envMetaDataRegistry: Record<string, { fileName: string; line: number }> = {};
+
   targetFiles.forEach((file) => {
     try {
       const result = parseEnvFile(file);
       totalParsedLines += result.parsedLines.length;
+
+      // تجميع المتغيرات السليمة من البارسر
+      if (result.parsedData) {
+        accumulatedCleanEnv = { ...accumulatedCleanEnv, ...result.parsedData };
+        
+        // تسجيل ميتا داتا الأسطر لكل مفتاح تم قراءته
+        result.parsedLines.forEach((p) => {
+          envMetaDataRegistry[p.key] = { fileName: file, line: p.line };
+        });
+      }
 
       result.issues.forEach((issue) => {
         envIssues.push({
@@ -86,14 +108,119 @@ async function main() {
         line: 0,
         severity: "error",
         message: error.message,
-        // message: `Package [${packageName}@${actualVersion}] has...`,
-        // key: packageName,
       });
     }
   });
 
-  sEnv.stop("Configuration analysis complete!");
+  sEnv.stop("Configuration syntax analysis complete!");
 
+  // =========================================================================
+  // المرحلة 2: الـ Semantic Validation والـ Presets (التدفق المتوازي والمدمج)
+  // =========================================================================
+  
+  // 🚀 التعديل الجوهري: تم إلغاء فحص hasSyntaxErrors لكي يعمل الفاليديشن والسنتناكس معاً دائماً
+  if (Object.keys(accumulatedCleanEnv).length > 0) {
+    // const sGuard = x.spinner();
+    // sGuard.start("🛡️ Guarding environment logic and cloud presets...");
+
+    // try {
+    //   // استدعاء دالة الفحص
+    //   await createEnv({
+    //     extends: ["vercel", "neon", "supabase"], 
+    //     runtimeEnvStrict: accumulatedCleanEnv, 
+    //     emptyStringAsUndefined: true,
+    //   });
+
+    //   sGuard.stop("Cloud presets and semantic validations passed!");
+    // } catch (validationError: any) {
+    //   sGuard.stop("Validation issues detected in configuration values!");
+      
+    //   if (validationError && validationError.errors && Array.isArray(validationError.errors)) {
+    //     validationError.errors.forEach((err: any) => {
+    //       const fieldPath = err.path ? err.path.join('.') : 'UNKNOWN';
+          
+    //       // 🚀 استدعاء رقم السطر والملف الحقيقيين من الـ Registry بأمان تام وبدون مشاكل Scope
+    //       const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
+
+    //       envIssues.push({
+    //         fileName: meta.fileName, 
+    //         line: meta.line, 
+    //         severity: "error",
+    //         message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
+    //       });
+    //     });
+    //   } else {
+    //     envIssues.push({
+    //       fileName: ".env",
+    //       line: 0,
+    //       severity: "error",
+    //       message: validationError?.message || String(validationError),
+    //     });
+    //   }
+    // }
+    const sGuard = x.spinner();
+sGuard.start("🛡️ Guarding environment logic and cloud presets...");
+
+try {
+  const guardResult = await createEnv({
+    runtimeEnvStrict: accumulatedCleanEnv,
+    emptyStringAsUndefined: true,
+  });
+
+  sGuard.stop(
+    `Semantic validations passed! ${styleText("dim", `[engine: ${guardResult.engine}]`)}`
+  );
+
+  // ✅ تمرير الـ unknownKeys للـ AI لو موجود
+  if (guardResult.unknownKeys.length > 0 && process.env.GEMINI_API_KEY) {
+    const { analyzeUnknownVariablesWithAi } = await import("./aiFallback.js");
+    const aiErrors = await analyzeUnknownVariablesWithAi(
+      guardResult.unknownKeys,
+      accumulatedCleanEnv
+    );
+
+    aiErrors.forEach((err) => {
+      const fieldPath = err.path?.[0] ?? "UNKNOWN";
+      const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
+      envIssues.push({
+        fileName: meta.fileName,
+        line: meta.line,
+        severity: "error",
+        message: `[AI Analysis] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
+      });
+    });
+  }
+
+} catch (validationError: any) {
+  const engine = validationError?.engine ?? "custom";
+  sGuard.stop(
+    `Validation issues detected! ${styleText("dim", `[engine: ${engine}]`)}`
+  );
+
+  if (validationError?.errors && Array.isArray(validationError.errors)) {
+    validationError.errors.forEach((err: any) => {
+      const fieldPath = err.path ? err.path.join(".") : "UNKNOWN";
+      const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
+
+      envIssues.push({
+        fileName: meta.fileName,
+        line: meta.line,
+        severity: "error",
+        message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
+      });
+    });
+  } else {
+    envIssues.push({
+      fileName: ".env",
+      line: 0,
+      severity: "error",
+      message: validationError?.message || String(validationError),
+    });
+  }
+}
+  }
+
+  // عرض المشاكل المجمعة (سنتاكس + سيمانتيك)
   if (envIssues.length > 0) {
     x.log.warn(
       styleText(
@@ -101,15 +228,36 @@ async function main() {
         `Found ${envIssues.length} issue(s) in your .env files:`,
       ),
     );
-    envIssues.forEach((issue) => {
-      const isError = issue.severity === "error";
-      const badgeColor = isError ? ["bgRed", "white"] : ["bgYellow", "black"];
-      const badgeText = isError ? " ERROR " : " WARN  ";
-      const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
-      const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
-      console.log(`  ${prefix} ${issue.message}`);
-    });
-    console.log("");
+  const syntaxIssues = envIssues.filter(issue => !issue.message.includes("[Preset Violation]"));
+    if (syntaxIssues.length > 0) {
+      console.log(`\n  ${styleText(["cyan", "bold"], "── Syntax & Formatting Issues 📋 ──────────────────")}`);
+      syntaxIssues.forEach((issue) => {
+        const isError = issue.severity === "error";
+        const badgeColor = isError ? ["bgRed", "white"] : ["bgYellow", "black"];
+        const badgeText = isError ? " ERROR " : " WARN  ";
+        const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
+        const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
+        console.log(`    ${prefix} ${issue.message}`);
+      });
+    }
+
+    // 2. تصفية وطباعة أخطاء الفاليديشن والقيم (التي تأتي من الـ Presets)
+    const validationIssues = envIssues.filter(issue => issue.message.includes("[Preset Violation]"));
+    if (validationIssues.length > 0) {
+      console.log(`\n  ${styleText(["magenta", "bold"], "── Semantic & Preset Violations 🛡️ ────────────────")}`);
+      validationIssues.forEach((issue) => {
+        const badgeColor = ["bgRed", "white"];
+        const badgeText = " ERROR ";
+        const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
+        const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
+        
+        // تنظيف الرسالة من كلمة [Preset Violation] الداخلية عشان الـ UI يطلع أرتب
+        const cleanMessage = issue.message.replace("[Preset Violation] ", "");
+        console.log(`    ${prefix} ${cleanMessage}`);
+      });
+    }
+    
+    console.log("\n");
   } else {
     x.log.success(
       styleText(
@@ -120,6 +268,9 @@ async function main() {
     console.log("");
   }
 
+  // =========================================================================
+  // المرحلة 3: فحص الـ Dependencies (ثابت كما هو)
+  // =========================================================================
   const sNpm = x.spinner();
   sNpm.start("📦 Scanning dependencies for known vulnerabilities (OSV API)...");
 
@@ -143,16 +294,11 @@ async function main() {
     );
     npmIssues.forEach((issue) => {
       const fileAndLine = `${styleText("cyan", "package.json")}:${styleText("dim", String(issue.line))}`;
-      const prefix = `${styleText(["bgRed", "white"], " VULN  ")} [${fileAndLine}]`;
+      const prefix = `${styleText(["bgRed", "white"], " VULN    ")} [${fileAndLine}]`;
       console.log(`  ${prefix} ${issue.message}`);
     });
     console.log("");
 
-    //   if (process.env.GEMINI_API_KEY) {
-    //     await generateFixRecommendations(npmIssues);
-    //   }
-
-    // } else if (fs.existsSync("package.json")) {
     if (process.env.GEMINI_API_KEY) {
       try {
         const packageJsonRaw = fs.readFileSync("package.json", "utf8");
@@ -178,6 +324,9 @@ async function main() {
     console.log("");
   }
 
+  // =========================================================================
+  // المرحلة 4: ملخص التقرير والنهو (Summary & Outro)
+  // =========================================================================
   const totalIssuesCount = envIssues.length + npmIssues.length;
   const hasErrors =
     envIssues.some((i) => i.severity === "error") || npmIssues.length > 0;
