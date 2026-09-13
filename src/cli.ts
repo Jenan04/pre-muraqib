@@ -1,354 +1,144 @@
 import * as x from "@clack/prompts";
 import { styleText, parseArgs } from "node:util";
-import { parseEnvFile } from "./core/EnvParser.js";
-import { NpmParser } from "./core/NpmParser.js";
-import * as fs from "node:fs";
-import { generateFixRecommendations } from "./core/AiAdvisor.js";
-
-// 🛡️ استيراد محرك فحص البيئات من مجلد guard الجديد
-import { createEnv } from "./guard/EnvValidator.js";
+import { createProjectContext } from "./core/context/project-context.js";
+import { AuditRunner } from "./core/runner/audit-runner.js";
+import { renderFindings } from "./cli/renderers/finding-renderer.js";
+import { formatSummaryText } from "./cli/renderers/summary-renderer.js";
+import { renderAiAdvisory } from "./cli/renderers/ai-renderer.js";
+import { renderJsonReport } from "./cli/renderers/json-renderer.js";
+import type { ValidationEngineName } from "./guard/core/engine-detector.js";
+import { runResolveWorkflow } from "./cli/resolve-workflow.js";
 
 async function main() {
-  console.clear();
-
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: {
       env: {
         type: "string",
         short: "e",
       },
+      engine: {
+        type: "string",
+      },
+      json: {
+        type: "boolean",
+      },
     },
+    allowPositionals: true,
     strict: false,
   });
 
-  x.intro(
-    `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config & Dependency Auditor")}`,
-  );
+  const command = positionals[0] || "audit";
+  const isJson = Boolean(values.json);
+  const context = createProjectContext(process.cwd());
 
-  let mode = values.env;
-  if (mode) {
-    x.log.info(`Environment passed via flag: ${styleText("cyan", mode)}`);
-  } else {
-    mode = await x.select({
-      message: "Select the tracking & monitoring environment:",
-      options: [
-        {
-          value: "build",
-          label: "Build Mode",
-          hint: "Fast local checks for syntax errors & duplicate keys",
-        },
-        {
-          value: "prod",
-          label: "Production Mode",
-          hint: "Strict security auditing for leaked tokens & weak secrets",
-        },
-      ],
-    });
-
-    if (x.isCancel(mode)) {
-      x.cancel("Scan cancelled by user.");
-      process.exit(0);
-    }
+  if (command === "resolve") {
+    await runResolveWorkflow(context);
+    return;
   }
 
-  // =========================================================================
-  // المرحلة 1: الـ Syntax Parser (شغل جنان العبقري)
-  // =========================================================================
-  const sEnv = x.spinner();
-  sEnv.start("📋 Scanning all configuration (.env) files...");
-
-  const targetFiles = fs
-    .readdirSync(".")
-    .filter((file) => file.startsWith(".env"));
-
-  if (targetFiles.length === 0) {
-    sEnv.stop("Scan failed!");
-    x.log.error(styleText("red", "No .env files found in the root directory."));
-    process.exit(1);
+  if (!isJson) {
+    console.clear();
+    x.intro(
+      `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config & Dependency Auditor")}`
+    );
   }
 
-  let totalParsedLines = 0;
-  let envIssues: {
-    fileName: string;
-    line: number;
-    severity: string;
-    message: string;
-  }[] = [];
+  let mode: string | undefined = typeof values.env === "string" ? values.env : undefined;
 
-  // كائن لتجميع البيانات النظيفة لتمريرها للمرحلة القادمة
-  let accumulatedCleanEnv: Record<string, string> = {};
+  if (!isJson) {
+    if (mode) {
+      x.log.info(`Environment passed via flag: ${styleText("cyan", mode)}`);
+    } else {
+      const selected = await x.select({
+        message: "Select the tracking & monitoring environment:",
+        options: [
+          {
+            value: "build",
+            label: "Build Mode",
+            hint: "Fast local checks for syntax errors & duplicate keys",
+          },
+          {
+            value: "prod",
+            label: "Production Mode",
+            hint: "Strict security auditing for leaked tokens & weak secrets",
+          },
+        ],
+      });
 
-  // 🚀 خريطة ذكية لحفظ مرجع: [المفتاح] -> { اسم الملف، رقم السطر الحقيقي }
-  const envMetaDataRegistry: Record<string, { fileName: string; line: number }> = {};
-
-  targetFiles.forEach((file) => {
-    try {
-      const result = parseEnvFile(file);
-      totalParsedLines += result.parsedLines.length;
-
-      // تجميع المتغيرات السليمة من البارسر
-      if (result.parsedData) {
-        accumulatedCleanEnv = { ...accumulatedCleanEnv, ...result.parsedData };
-        
-        // تسجيل ميتا داتا الأسطر لكل مفتاح تم قراءته
-        result.parsedLines.forEach((p) => {
-          envMetaDataRegistry[p.key] = { fileName: file, line: p.line };
-        });
+      if (x.isCancel(selected)) {
+        x.cancel("Scan cancelled by user.");
+        process.exit(0);
       }
 
-      result.issues.forEach((issue) => {
-        envIssues.push({
-          fileName: file,
-          ...issue,
-        });
-      });
-    } catch (error: any) {
-      envIssues.push({
-        fileName: file,
-        line: 0,
-        severity: "error",
-        message: error.message,
-      });
+      mode = String(selected);
     }
-  });
-
-  sEnv.stop("Configuration syntax analysis complete!");
-
-  // =========================================================================
-  // المرحلة 2: الـ Semantic Validation والـ Presets (التدفق المتوازي والمدمج)
-  // =========================================================================
-  
-  // 🚀 التعديل الجوهري: تم إلغاء فحص hasSyntaxErrors لكي يعمل الفاليديشن والسنتناكس معاً دائماً
-  if (Object.keys(accumulatedCleanEnv).length > 0) {
-    // const sGuard = x.spinner();
-    // sGuard.start("🛡️ Guarding environment logic and cloud presets...");
-
-    // try {
-    //   // استدعاء دالة الفحص
-    //   await createEnv({
-    //     extends: ["vercel", "neon", "supabase"], 
-    //     runtimeEnvStrict: accumulatedCleanEnv, 
-    //     emptyStringAsUndefined: true,
-    //   });
-
-    //   sGuard.stop("Cloud presets and semantic validations passed!");
-    // } catch (validationError: any) {
-    //   sGuard.stop("Validation issues detected in configuration values!");
-      
-    //   if (validationError && validationError.errors && Array.isArray(validationError.errors)) {
-    //     validationError.errors.forEach((err: any) => {
-    //       const fieldPath = err.path ? err.path.join('.') : 'UNKNOWN';
-          
-    //       // 🚀 استدعاء رقم السطر والملف الحقيقيين من الـ Registry بأمان تام وبدون مشاكل Scope
-    //       const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
-
-    //       envIssues.push({
-    //         fileName: meta.fileName, 
-    //         line: meta.line, 
-    //         severity: "error",
-    //         message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
-    //       });
-    //     });
-    //   } else {
-    //     envIssues.push({
-    //       fileName: ".env",
-    //       line: 0,
-    //       severity: "error",
-    //       message: validationError?.message || String(validationError),
-    //     });
-    //   }
-    // }
-    const sGuard = x.spinner();
-sGuard.start("🛡️ Guarding environment logic and cloud presets...");
-
-try {
-  const guardResult = await createEnv({
-    runtimeEnvStrict: accumulatedCleanEnv,
-    emptyStringAsUndefined: true,
-  });
-
-  sGuard.stop(
-    `Semantic validations passed! ${styleText("dim", `[engine: ${guardResult.engine}]`)}`
-  );
-
-  // ✅ تمرير الـ unknownKeys للـ AI لو موجود
-  if (guardResult.unknownKeys.length > 0 && process.env.GEMINI_API_KEY) {
-    const { analyzeUnknownVariablesWithAi } = await import("./aiFallback.js");
-    const aiErrors = await analyzeUnknownVariablesWithAi(
-      guardResult.unknownKeys,
-      accumulatedCleanEnv
-    );
-
-    aiErrors.forEach((err) => {
-      const fieldPath = err.path?.[0] ?? "UNKNOWN";
-      const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
-      envIssues.push({
-        fileName: meta.fileName,
-        line: meta.line,
-        severity: "error",
-        message: `[AI Analysis] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
-      });
-    });
   }
 
-} catch (validationError: any) {
-  const engine = validationError?.engine ?? "custom";
-  sGuard.stop(
-    `Validation issues detected! ${styleText("dim", `[engine: ${engine}]`)}`
-  );
+  const preferredEngine =
+    typeof values.engine === "string" ? (values.engine as ValidationEngineName) : undefined;
 
-  if (validationError?.errors && Array.isArray(validationError.errors)) {
-    validationError.errors.forEach((err: any) => {
-      const fieldPath = err.path ? err.path.join(".") : "UNKNOWN";
-      const meta = envMetaDataRegistry[fieldPath] || { fileName: ".env", line: 0 };
-
-      envIssues.push({
-        fileName: meta.fileName,
-        line: meta.line,
-        severity: "error",
-        message: `[Preset Violation] Field '${styleText("yellow", fieldPath)}': ${err.message}`,
-      });
-    });
-  } else {
-    envIssues.push({
-      fileName: ".env",
-      line: 0,
-      severity: "error",
-      message: validationError?.message || String(validationError),
-    });
-  }
-}
+  let spinner: ReturnType<typeof x.spinner> | null = null;
+  if (!isJson) {
+    spinner = x.spinner();
+    spinner.start("🔍 Executing comprehensive security & configuration audit...");
   }
 
-  // عرض المشاكل المجمعة (سنتاكس + سيمانتيك)
-  if (envIssues.length > 0) {
-    x.log.warn(
-      styleText(
-        "yellow",
-        `Found ${envIssues.length} issue(s) in your .env files:`,
-      ),
-    );
-  const syntaxIssues = envIssues.filter(issue => !issue.message.includes("[Preset Violation]"));
-    if (syntaxIssues.length > 0) {
-      console.log(`\n  ${styleText(["cyan", "bold"], "── Syntax & Formatting Issues 📋 ──────────────────")}`);
-      syntaxIssues.forEach((issue) => {
-        const isError = issue.severity === "error";
-        const badgeColor = isError ? ["bgRed", "white"] : ["bgYellow", "black"];
-        const badgeText = isError ? " ERROR " : " WARN  ";
-        const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
-        const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
-        console.log(`    ${prefix} ${issue.message}`);
-      });
+  const runner = new AuditRunner();
+  let report;
+
+  try {
+    report = await runner.run(context, {
+      mode: mode === "prod" ? "prod" : "build",
+      engine: preferredEngine,
+      enableAi: true,
+    });
+  } catch (err: unknown) {
+    if (spinner) {
+      spinner.stop("Audit execution failed!");
     }
-
-    // 2. تصفية وطباعة أخطاء الفاليديشن والقيم (التي تأتي من الـ Presets)
-    const validationIssues = envIssues.filter(issue => issue.message.includes("[Preset Violation]"));
-    if (validationIssues.length > 0) {
-      console.log(`\n  ${styleText(["magenta", "bold"], "── Semantic & Preset Violations 🛡️ ────────────────")}`);
-      validationIssues.forEach((issue) => {
-        const badgeColor = ["bgRed", "white"];
-        const badgeText = " ERROR ";
-        const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
-        const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
-        
-        // تنظيف الرسالة من كلمة [Preset Violation] الداخلية عشان الـ UI يطلع أرتب
-        const cleanMessage = issue.message.replace("[Preset Violation] ", "");
-        console.log(`    ${prefix} ${cleanMessage}`);
-      });
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!isJson) {
+      console.log("");
+      x.outro(
+        styleText("red", "Muraqib scan failed\n\n") +
+        styleText("dim", "Cause:\n  ") +
+        msg
+      );
     }
-    
-    console.log("\n");
-  } else {
-    x.log.success(
-      styleText(
-        "green",
-        "✔ Environment configurations are clean. No syntax errors or leaks found!",
-      ),
+    process.exit(3);
+  }
+
+  if (spinner) {
+    spinner.stop(`Audit complete! ${styleText("dim", `[engine: ${report.engine}]`)}`);
+  }
+
+  if (isJson) {
+    renderJsonReport(report);
+    process.exit(report.exitCode);
+  }
+
+  // 1. Render findings
+  renderFindings(report.findings);
+
+  if (report.findings.some((f) => f.dependencyProblem !== undefined)) {
+    console.log(
+      `  ${styleText("cyan", "💡 Tip:")} Run ${styleText(["bold", "cyan"], "muraqib resolve")} to inspect and apply safe dependency resolutions.\n`
     );
-    console.log("");
   }
 
-  // =========================================================================
-  // المرحلة 3: فحص الـ Dependencies (ثابت كما هو)
-  // =========================================================================
-  const sNpm = x.spinner();
-  sNpm.start("📦 Scanning dependencies for known vulnerabilities (OSV API)...");
+  // 2. Render AI advisory if present
+  renderAiAdvisory(report.aiAdvisory);
 
-  let npmIssues: any[] = [];
+  // 3. Render summary note
+  x.note(formatSummaryText(report), "Muraqib Audit Summary");
 
-  if (fs.existsSync("package.json")) {
-    const npmResult = await NpmParser("package.json");
-    npmIssues = npmResult.issues;
-    sNpm.stop("Dependency vulnerability analysis complete!");
-  } else {
-    sNpm.stop("Skipped!");
-    x.log.info("No package.json found, skipping dependency scan.");
-  }
-
-  if (npmIssues.length > 0) {
-    x.log.error(
-      styleText(
-        "red",
-        `🚨 Security Alert: Found ${npmIssues.length} vulnerability issues:`,
-      ),
-    );
-    npmIssues.forEach((issue) => {
-      const fileAndLine = `${styleText("cyan", "package.json")}:${styleText("dim", String(issue.line))}`;
-      const prefix = `${styleText(["bgRed", "white"], " VULN    ")} [${fileAndLine}]`;
-      console.log(`  ${prefix} ${issue.message}`);
-    });
-    console.log("");
-
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const packageJsonRaw = fs.readFileSync("package.json", "utf8");
-        const packageJson = JSON.parse(packageJsonRaw);
-
-        const allDependencies = {
-          ...(packageJson.dependencies || {}),
-          ...(packageJson.devDependencies || {}),
-        };
-
-        await generateFixRecommendations(npmIssues, allDependencies);
-      } catch (e) {
-        await generateFixRecommendations(npmIssues, {});
-      }
-    }
-  } else if (fs.existsSync("package.json")) {
-    x.log.success(
-      styleText(
-        "green",
-        "✔ All dependencies are secure. No known vulnerabilities found!",
-      ),
-    );
-    console.log("");
-  }
-
-  // =========================================================================
-  // المرحلة 4: ملخص التقرير والنهو (Summary & Outro)
-  // =========================================================================
-  const totalIssuesCount = envIssues.length + npmIssues.length;
-  const hasErrors =
-    envIssues.some((i) => i.severity === "error") || npmIssues.length > 0;
-
-  let summaryContent = `• Scanned Env Files: ${styleText("cyan", targetFiles.join(", "))}\n`;
-  summaryContent += `• Total Valid Env Variables: ${styleText("green", String(totalParsedLines))}\n`;
-  summaryContent += `• Checked NPM Packages: ${styleText("cyan", "Active on Disk")}\n`;
-
-  if (totalIssuesCount === 0) {
-    summaryContent += `• Status: ${styleText("green", "✔ Clean, Secure Syntax & Safe Dependencies")}`;
-  } else {
-    summaryContent += `• Status: ${hasErrors ? styleText("red", "✖ Fix required before deployment") : styleText("yellow", "⚠ Code health warnings detected")}`;
-  }
-
-  x.note(summaryContent, "Muraqib Audit Summary");
-
-  if (hasErrors) {
+  // 4. Outro & Exit
+  if (report.hasBlockingIssues) {
     x.outro(
       styleText(
         "red",
-        "Muraqib scan failed. Please resolve the security/syntax errors above. ❌",
-      ),
+        "Muraqib scan failed. Please resolve the security/syntax errors above. ❌"
+      )
     );
     process.exit(1);
   } else {
@@ -358,6 +148,6 @@ try {
 }
 
 main().catch((err) => {
-  console.error("An error occurred during Muraqib execution:", err);
-  process.exit(1);
+  console.error("An unhandled error occurred during Muraqib execution:", err);
+  process.exit(3);
 });
