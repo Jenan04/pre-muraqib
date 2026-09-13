@@ -1,6 +1,6 @@
 import url from "node:url";
 
-const osvUrl = process.env.OSV_API_URL 
+const osvUrl = process.env.OSV_API_URL ?? "https://api.osv.dev/v1/query";
 const parsedUrl = new url.URL(osvUrl);
 
 export const osvConfig = {

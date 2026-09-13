@@ -1,205 +1,144 @@
 import * as x from "@clack/prompts";
 import { styleText, parseArgs } from "node:util";
-import { parseEnvFile } from "./core/EnvParser.js";
-import { NpmParser } from "./core/NpmParser.js";
-import * as fs from "node:fs";
-import { generateFixRecommendations } from "./core/AiAdvisor.js";
+import { createProjectContext } from "./core/context/project-context.js";
+import { AuditRunner } from "./core/runner/audit-runner.js";
+import { renderFindings } from "./cli/renderers/finding-renderer.js";
+import { formatSummaryText } from "./cli/renderers/summary-renderer.js";
+import { renderAiAdvisory } from "./cli/renderers/ai-renderer.js";
+import { renderJsonReport } from "./cli/renderers/json-renderer.js";
+import type { ValidationEngineName } from "./guard/core/engine-detector.js";
+import { runResolveWorkflow } from "./cli/resolve-workflow.js";
 
 async function main() {
-  console.clear();
-
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: {
       env: {
         type: "string",
         short: "e",
       },
+      engine: {
+        type: "string",
+      },
+      json: {
+        type: "boolean",
+      },
     },
+    allowPositionals: true,
     strict: false,
   });
 
-  x.intro(
-    `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config & Dependency Auditor")}`,
-  );
+  const command = positionals[0] || "audit";
+  const isJson = Boolean(values.json);
+  const context = createProjectContext(process.cwd());
 
-  let mode = values.env;
-  if (mode) {
-    x.log.info(`Environment passed via flag: ${styleText("cyan", mode)}`);
-  } else {
-    mode = await x.select({
-      message: "Select the tracking & monitoring environment:",
-      options: [
-        {
-          value: "build",
-          label: "Build Mode",
-          hint: "Fast local checks for syntax errors & duplicate keys",
-        },
-        {
-          value: "prod",
-          label: "Production Mode",
-          hint: "Strict security auditing for leaked tokens & weak secrets",
-        },
-      ],
-    });
-
-    if (x.isCancel(mode)) {
-      x.cancel("Scan cancelled by user.");
-      process.exit(0);
-    }
+  if (command === "resolve") {
+    await runResolveWorkflow(context);
+    return;
   }
 
-  const sEnv = x.spinner();
-  sEnv.start("📋 Scanning all configuration (.env) files...");
-
-  const targetFiles = fs
-    .readdirSync(".")
-    .filter((file) => file.startsWith(".env"));
-
-  if (targetFiles.length === 0) {
-    sEnv.stop("Scan failed!");
-    x.log.error(styleText("red", "No .env files found in the root directory."));
-    process.exit(1);
+  if (!isJson) {
+    console.clear();
+    x.intro(
+      `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config & Dependency Auditor")}`
+    );
   }
 
-  let totalParsedLines = 0;
-  let envIssues: {
-    fileName: string;
-    line: number;
-    severity: string;
-    message: string;
-  }[] = [];
+  let mode: string | undefined = typeof values.env === "string" ? values.env : undefined;
 
-  targetFiles.forEach((file) => {
-    try {
-      const result = parseEnvFile(file);
-      totalParsedLines += result.parsedLines.length;
-
-      result.issues.forEach((issue) => {
-        envIssues.push({
-          fileName: file,
-          ...issue,
-        });
+  if (!isJson) {
+    if (mode) {
+      x.log.info(`Environment passed via flag: ${styleText("cyan", mode)}`);
+    } else {
+      const selected = await x.select({
+        message: "Select the tracking & monitoring environment:",
+        options: [
+          {
+            value: "build",
+            label: "Build Mode",
+            hint: "Fast local checks for syntax errors & duplicate keys",
+          },
+          {
+            value: "prod",
+            label: "Production Mode",
+            hint: "Strict security auditing for leaked tokens & weak secrets",
+          },
+        ],
       });
-    } catch (error: any) {
-      envIssues.push({
-        fileName: file,
-        line: 0,
-        severity: "error",
-        message: error.message,
-        // message: `Package [${packageName}@${actualVersion}] has...`,
-        // key: packageName,
-      });
-    }
-  });
 
-  sEnv.stop("Configuration analysis complete!");
-
-  if (envIssues.length > 0) {
-    x.log.warn(
-      styleText(
-        "yellow",
-        `Found ${envIssues.length} issue(s) in your .env files:`,
-      ),
-    );
-    envIssues.forEach((issue) => {
-      const isError = issue.severity === "error";
-      const badgeColor = isError ? ["bgRed", "white"] : ["bgYellow", "black"];
-      const badgeText = isError ? " ERROR " : " WARN  ";
-      const fileAndLine = `${styleText("cyan", issue.fileName)}:${styleText("dim", String(issue.line))}`;
-      const prefix = `${styleText(badgeColor as any, badgeText)} [${fileAndLine}]`;
-      console.log(`  ${prefix} ${issue.message}`);
-    });
-    console.log("");
-  } else {
-    x.log.success(
-      styleText(
-        "green",
-        "✔ Environment configurations are clean. No syntax errors or leaks found!",
-      ),
-    );
-    console.log("");
-  }
-
-  const sNpm = x.spinner();
-  sNpm.start("📦 Scanning dependencies for known vulnerabilities (OSV API)...");
-
-  let npmIssues: any[] = [];
-
-  if (fs.existsSync("package.json")) {
-    const npmResult = await NpmParser("package.json");
-    npmIssues = npmResult.issues;
-    sNpm.stop("Dependency vulnerability analysis complete!");
-  } else {
-    sNpm.stop("Skipped!");
-    x.log.info("No package.json found, skipping dependency scan.");
-  }
-
-  if (npmIssues.length > 0) {
-    x.log.error(
-      styleText(
-        "red",
-        `🚨 Security Alert: Found ${npmIssues.length} vulnerability issues:`,
-      ),
-    );
-    npmIssues.forEach((issue) => {
-      const fileAndLine = `${styleText("cyan", "package.json")}:${styleText("dim", String(issue.line))}`;
-      const prefix = `${styleText(["bgRed", "white"], " VULN  ")} [${fileAndLine}]`;
-      console.log(`  ${prefix} ${issue.message}`);
-    });
-    console.log("");
-
-    //   if (process.env.GEMINI_API_KEY) {
-    //     await generateFixRecommendations(npmIssues);
-    //   }
-
-    // } else if (fs.existsSync("package.json")) {
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const packageJsonRaw = fs.readFileSync("package.json", "utf8");
-        const packageJson = JSON.parse(packageJsonRaw);
-
-        const allDependencies = {
-          ...(packageJson.dependencies || {}),
-          ...(packageJson.devDependencies || {}),
-        };
-
-        await generateFixRecommendations(npmIssues, allDependencies);
-      } catch (e) {
-        await generateFixRecommendations(npmIssues, {});
+      if (x.isCancel(selected)) {
+        x.cancel("Scan cancelled by user.");
+        process.exit(0);
       }
+
+      mode = String(selected);
     }
-  } else if (fs.existsSync("package.json")) {
-    x.log.success(
-      styleText(
-        "green",
-        "✔ All dependencies are secure. No known vulnerabilities found!",
-      ),
+  }
+
+  const preferredEngine =
+    typeof values.engine === "string" ? (values.engine as ValidationEngineName) : undefined;
+
+  let spinner: ReturnType<typeof x.spinner> | null = null;
+  if (!isJson) {
+    spinner = x.spinner();
+    spinner.start("🔍 Executing comprehensive security & configuration audit...");
+  }
+
+  const runner = new AuditRunner();
+  let report;
+
+  try {
+    report = await runner.run(context, {
+      mode: mode === "prod" ? "prod" : "build",
+      engine: preferredEngine,
+      enableAi: true,
+    });
+  } catch (err: unknown) {
+    if (spinner) {
+      spinner.stop("Audit execution failed!");
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!isJson) {
+      console.log("");
+      x.outro(
+        styleText("red", "Muraqib scan failed\n\n") +
+        styleText("dim", "Cause:\n  ") +
+        msg
+      );
+    }
+    process.exit(3);
+  }
+
+  if (spinner) {
+    spinner.stop(`Audit complete! ${styleText("dim", `[engine: ${report.engine}]`)}`);
+  }
+
+  if (isJson) {
+    renderJsonReport(report);
+    process.exit(report.exitCode);
+  }
+
+  // 1. Render findings
+  renderFindings(report.findings);
+
+  if (report.findings.some((f) => f.dependencyProblem !== undefined)) {
+    console.log(
+      `  ${styleText("cyan", "💡 Tip:")} Run ${styleText(["bold", "cyan"], "muraqib resolve")} to inspect and apply safe dependency resolutions.\n`
     );
-    console.log("");
   }
 
-  const totalIssuesCount = envIssues.length + npmIssues.length;
-  const hasErrors =
-    envIssues.some((i) => i.severity === "error") || npmIssues.length > 0;
+  // 2. Render AI advisory if present
+  renderAiAdvisory(report.aiAdvisory);
 
-  let summaryContent = `• Scanned Env Files: ${styleText("cyan", targetFiles.join(", "))}\n`;
-  summaryContent += `• Total Valid Env Variables: ${styleText("green", String(totalParsedLines))}\n`;
-  summaryContent += `• Checked NPM Packages: ${styleText("cyan", "Active on Disk")}\n`;
+  // 3. Render summary note
+  x.note(formatSummaryText(report), "Muraqib Audit Summary");
 
-  if (totalIssuesCount === 0) {
-    summaryContent += `• Status: ${styleText("green", "✔ Clean, Secure Syntax & Safe Dependencies")}`;
-  } else {
-    summaryContent += `• Status: ${hasErrors ? styleText("red", "✖ Fix required before deployment") : styleText("yellow", "⚠ Code health warnings detected")}`;
-  }
-
-  x.note(summaryContent, "Muraqib Audit Summary");
-
-  if (hasErrors) {
+  // 4. Outro & Exit
+  if (report.hasBlockingIssues) {
     x.outro(
       styleText(
         "red",
-        "Muraqib scan failed. Please resolve the security/syntax errors above. ❌",
-      ),
+        "Muraqib scan failed. Please resolve the security/syntax errors above. ❌"
+      )
     );
     process.exit(1);
   } else {
@@ -209,6 +148,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("An error occurred during Muraqib execution:", err);
-  process.exit(1);
+  console.error("An unhandled error occurred during Muraqib execution:", err);
+  process.exit(3);
 });

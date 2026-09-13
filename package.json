@@ -4,11 +4,15 @@
   "description": "AI-driven DevSecOps CLI tool for vulnerability monitoring",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "muraqib": "./bin/muraqib.js"
+  },
   "scripts": {
+    "muraqib": "tsx src/cli.ts",
     "dev": "tsx --env-file=.env src/cli.ts -e build",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "repository": {
     "type": "git",
@@ -29,11 +33,32 @@
   "packageManager": "pnpm@10.29.2",
   "dependencies": {
     "@clack/prompts": "1.4.0",
-    "@google/genai": "2.7.0"
+    "@google/genai": "2.7.0",
+    "axios": "1.18.0"
   },
   "devDependencies": {
     "@types/node": "24.0.0",
+    "arktype": "^2.0.0-rc.26",
+    "esbuild": "0.28.2",
     "tsx": "4.22.3",
-    "typescript": "5.5.4"
+    "typescript": "5.5.4",
+    "valibot": "^1.4.2",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "arktype": "^2.x",
+    "valibot": "^0.x",
+    "zod": "^3.x"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    },
+    "valibot": {
+      "optional": true
+    },
+    "arktype": {
+      "optional": true
+    }
   }
 }
