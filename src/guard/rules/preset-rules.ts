@@ -180,10 +180,10 @@ export function validateField(key: string, value: string, rule: FieldRule): stri
   if (rule.allowedValues && !rule.allowedValues.includes(value)) {
     return rule.message;
   }
-  if (rule.minLength && value.length < rule.minLength) {
+  if (rule.minLength !== undefined && value.length < rule.minLength) {
     return rule.message;
   }
-  if (rule.maxLength && value.length > rule.maxLength) {
+  if (rule.maxLength !== undefined && value.length > rule.maxLength) {
     return rule.message;
   }
   if (rule.regex && !rule.regex.test(value)) {
