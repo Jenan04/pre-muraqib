@@ -1,0 +1,27 @@
+import type { Finding } from "../findings/finding.js";
+
+export interface ScanContext {
+  projectPath: string;
+  files: string[];
+  packageManager?: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  runtimeEnv?: Record<string, string>;
+}
+
+export type ScanStatus = "success" | "partial" | "failed" | "unavailable";
+
+export interface ScanResult {
+  scanner: string;
+  status: ScanStatus;
+  findings: Finding[];
+  error?: string;
+}
+
+export interface ScannerEngine {
+  readonly name: string;
+
+  supports(context: ScanContext): boolean;
+
+  scan(context: ScanContext): Promise<ScanResult>;
+}
