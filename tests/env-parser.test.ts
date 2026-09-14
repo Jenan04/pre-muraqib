@@ -78,3 +78,30 @@ test("EnvParser: flags duplicate keys with configuration category and low severi
     fs.unlinkSync(tmpFile);
   }
 });
+
+test("EnvParser: preserves hash characters inside quoted values", () => {
+  const tmpFile = path.join(os.tmpdir(), `env-test-hash-${Date.now()}.env`);
+  fs.writeFileSync(tmpFile, 'PASSWORD="abc#123" # comment\n');
+
+  try {
+    const result = parseEnvFile(tmpFile);
+    assert.equal(result.parsedData["PASSWORD"], "abc#123");
+    assert.equal(result.issues.length, 0);
+  } finally {
+    fs.unlinkSync(tmpFile);
+  }
+});
+
+test("EnvParser: findings never serialize malformed secret values", () => {
+  const tmpFile = path.join(os.tmpdir(), `env-test-redaction-${Date.now()}.env`);
+  const secret = "super-secret-value";
+  fs.writeFileSync(tmpFile, `API_KEY=${secret} with-space\n`);
+
+  try {
+    const result = parseEnvFile(tmpFile);
+    assert.ok(result.findings.length > 0);
+    assert.equal(JSON.stringify(result.findings).includes(secret), false);
+  } finally {
+    fs.unlinkSync(tmpFile);
+  }
+});
