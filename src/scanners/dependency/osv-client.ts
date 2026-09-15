@@ -75,7 +75,19 @@ export function queryOsv(
         if (isHandled) return;
         isHandled = true;
 
-        if (res.statusCode && (res.statusCode >= 500 || res.statusCode === 429)) {
+        // if (res.statusCode && (res.statusCode >= 500 || res.statusCode === 429)) {
+        //   resolve({
+        //     status: "unavailable",
+        //     error: `OSV service returned HTTP status ${res.statusCode}`,
+        //   });
+        //   return;
+        // }
+        if (Buffer.byteLength(data) > 5 * 1024 * 1024) {
+          req.destroy(
+            new Error("OSV response exceeded the 5 MiB safety limit")
+          );
+        }
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
           resolve({
             status: "unavailable",
             error: `OSV service returned HTTP status ${res.statusCode}`,
