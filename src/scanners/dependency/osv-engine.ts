@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ScannerEngine, ScanContext, ScanResult, ScanStatus } from "../../core/contracts/scanner-engine.js";
+import type { ScannerEngine, ScanContext, ScanResult } from "../../core/contracts/scanner-engine.js";
 import type { DependencyType, Finding } from "../../core/findings/finding.js";
 import { queryOsv, type OsvVulnerability } from "./osv-client.js";
 
@@ -114,23 +114,38 @@ export class OsvScanner implements ScannerEngine {
     const findings: Finding[] = [];
     let hasNetworkErrors = false;
     let hasTimeouts = false;
+    let successfulQueries = 0;
+    let skippedQueries = 0;
+    const diagnostics: string[] = [];
 
     // Concurrency-limited execution
     await this.runWithConcurrency(
       packagesToScan,
       this.concurrencyLimit,
       async (pkg) => {
+        if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.installedVersion)) {
+          skippedQueries += 1;
+          diagnostics.push(
+            `Skipped ${pkg.name}: '${pkg.declaredVersion}' did not resolve to an exact installed version.`
+          );
+          return;
+        }
+
         const queryResult = await queryOsv(pkg.name, pkg.installedVersion);
 
         if (queryResult.status === "timeout") {
           hasTimeouts = true;
+          diagnostics.push(`OSV query timed out for ${pkg.name}@${pkg.installedVersion}.`);
           return;
         }
 
         if (queryResult.status === "unavailable" || queryResult.status === "error") {
           hasNetworkErrors = true;
+          diagnostics.push(`OSV query failed for ${pkg.name}@${pkg.installedVersion}: ${queryResult.error}`);
           return;
         }
+
+        successfulQueries += 1;
 
         const vulns = queryResult.data.vulns ?? [];
         if (vulns.length > 0) {
@@ -144,6 +159,7 @@ export class OsvScanner implements ScannerEngine {
             severity: "high",
             category: "security",
             source: this.name,
+            confidence: "confirmed",
             key: pkg.name,
             file: "package.json",
             evidence: `Installed: ${pkg.installedVersion}, Declared: ${pkg.declaredVersion}`,
@@ -172,19 +188,20 @@ export class OsvScanner implements ScannerEngine {
       }
     );
 
-    if (hasNetworkErrors || hasTimeouts) {
+    if (hasNetworkErrors || hasTimeouts || skippedQueries > 0) {
       return {
         scanner: this.name,
-        status: "failed",
-        findings: [],
-        error: "Unable to reach the OSV API or queries timed out. Dependencies were not verified.",
+        status: successfulQueries > 0 ? "partial" : "failed",
+        findings: findings.sort((a, b) => a.id.localeCompare(b.id)),
+        error: "One or more dependencies could not be verified by OSV.",
+        diagnostics: diagnostics.sort(),
       };
     }
 
     return {
       scanner: this.name,
       status: "success",
-      findings,
+      findings: findings.sort((a, b) => a.id.localeCompare(b.id)),
     };
   }
 

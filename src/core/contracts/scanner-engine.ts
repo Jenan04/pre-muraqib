@@ -6,7 +6,6 @@ export interface ScanContext {
   packageManager?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
-  runtimeEnv?: Record<string, string>;
 }
 
 export type ScanStatus = "success" | "partial" | "failed" | "unavailable";
@@ -16,6 +15,7 @@ export interface ScanResult {
   status: ScanStatus;
   findings: Finding[];
   error?: string;
+  diagnostics?: string[];
 }
 
 export interface ScannerEngine {
