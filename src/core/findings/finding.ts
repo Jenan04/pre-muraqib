@@ -20,6 +20,11 @@ export type DependencyType =
   | "peerDependencies"
   | "optionalDependencies";
 
+export type FindingConfidence =
+  | "confirmed"
+  | "inferred"
+  | "advisory";  
+
 export interface OsvAdvisoryData {
   id: string;
   summary?: string | undefined;
@@ -52,6 +57,7 @@ export interface Finding {
   category: FindingCategory;
 
   source: string;
+  confidence?: FindingConfidence | undefined;
 
   file?: string | undefined;
   line?: number | undefined;

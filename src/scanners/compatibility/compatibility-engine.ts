@@ -60,7 +60,12 @@ export class CompatibilityEngine implements ScannerEngine {
     try {
       packageJson = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
     } catch {
-      return { scanner: this.name, status: "failed", findings: [] };
+      return {
+        scanner: this.name,
+        status: "failed",
+        findings: [],
+        error: "Failed to parse package.json for compatibility scanning.",
+      };
     }
 
     // 1. Node runtime engine check
@@ -81,6 +86,7 @@ export class CompatibilityEngine implements ScannerEngine {
             severity: "high",
             category: "compatibility",
             source: this.name,
+            confidence: "confirmed",
             file: "package.json",
             remediation: `Switch Node.js version to satisfy ${requiredNode}.`,
           });
@@ -111,6 +117,7 @@ export class CompatibilityEngine implements ScannerEngine {
             severity: "medium",
             category: "compatibility",
             source: this.name,
+            confidence: "inferred",
             file: "package.json",
             remediation: `Adjust versions for ${rule.packageA} and ${rule.packageB} to ensure verified interoperability.`,
           });
