@@ -9,6 +9,36 @@ export interface ParseEnvResult {
   findings: Finding[];
 }
 
+function stripInlineComment(value: string): string {
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (character === "\\" && quote === '"') {
+      escaped = true;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = quote === character ? null : quote ?? character;
+      continue;
+    }
+
+    if (character === "#" && quote === null) {
+      return value.slice(0, index).trimEnd();
+    }
+  }
+
+  return value;
+}
+
 export function parseEnvFile(filePath: string): ParseEnvResult {
   const parsedLines: parsedLine[] = [];
   const issues: syntaxIssue[] = [];
@@ -52,7 +82,7 @@ export function parseEnvFile(filePath: string): ParseEnvResult {
         source: "env-parser",
         file: filePath,
         line: lineNum,
-        evidence: trimmed,
+        evidence: "A non-empty environment line is missing an assignment separator.",
         remediation: "Add an '=' between the variable name and value.",
       });
       return;
@@ -78,7 +108,7 @@ export function parseEnvFile(filePath: string): ParseEnvResult {
         source: "env-parser",
         file: filePath,
         line: lineNum,
-        evidence: trimmed,
+        evidence: "The environment assignment contains an invalid variable name.",
         remediation: "Ensure key starts with a letter or underscore and contains only alphanumeric characters or underscores.",
       });
       return;
@@ -87,11 +117,8 @@ export function parseEnvFile(filePath: string): ParseEnvResult {
     const key = match[1];
     let rawValue = match[2] ? match[2].trim() : "";
 
-    // Clean inline comments
-    if (rawValue.includes("#")) {
-      const parts = rawValue.split("#");
-      rawValue = parts[0] ? parts[0].trim() : "";
-    }
+    // Strip comments only when # appears outside quoted values.
+    rawValue = stripInlineComment(rawValue).trim();
 
     const startsWithQuote = rawValue.startsWith('"') || rawValue.startsWith("'");
     const endsWithQuote = rawValue.endsWith('"') || rawValue.endsWith("'");
@@ -122,7 +149,7 @@ export function parseEnvFile(filePath: string): ParseEnvResult {
           file: filePath,
           line: lineNum,
           key,
-          evidence: rawValue,
+          evidence: "The value contains an unmatched quote. The raw value was redacted.",
           remediation: "Wrap the entire value in matching single or double quotes.",
         });
       } else {
@@ -149,8 +176,8 @@ export function parseEnvFile(filePath: string): ParseEnvResult {
           file: filePath,
           line: lineNum,
           key,
-          evidence: rawValue,
-          remediation: `Wrap the value in quotes: ${key}="${rawValue}"`,
+          evidence: "The value contains unquoted whitespace. The raw value was redacted.",
+          remediation: `Wrap the value assigned to ${key} in matching quotes.`,
         });
       }
     }

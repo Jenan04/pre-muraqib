@@ -1,18 +1,27 @@
 {
   "name": "muraqib",
   "version": "1.0.0",
-  "description": "AI-driven DevSecOps CLI tool for vulnerability monitoring",
+  "description": "Local-first DevSecOps project auditing and remediation planning CLI",
   "type": "module",
-  "main": "index.js",
+  "main": "./dist/cli.js",
   "bin": {
     "muraqib": "./bin/muraqib.js"
   },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "muraqib": "tsx src/cli.ts",
     "dev": "tsx --env-file=.env src/cli.ts -e build",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "tsx --test tests/**/*.test.ts"
+    "build": "node scripts/clean-dist.mjs && tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "prepack": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -31,34 +40,23 @@
   },
   "homepage": "https://github.com/Jenan04/pre-muraqib#readme",
   "packageManager": "pnpm@10.29.2",
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "dependencies": {
     "@clack/prompts": "1.4.0",
-    "@google/genai": "2.7.0",
-    "axios": "1.18.0"
-  },
-  "devDependencies": {
-    "@types/node": "24.0.0",
+    "@google/genai": "2.22.0",
     "arktype": "^2.0.0-rc.26",
-    "esbuild": "0.28.2",
-    "tsx": "4.22.3",
-    "typescript": "5.5.4",
+    "axios": "1.18.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.3",
     "valibot": "^1.4.2",
     "zod": "^3.23.8"
   },
-  "peerDependencies": {
-    "arktype": "^2.x",
-    "valibot": "^0.x",
-    "zod": "^3.x"
-  },
-  "peerDependenciesMeta": {
-    "zod": {
-      "optional": true
-    },
-    "valibot": {
-      "optional": true
-    },
-    "arktype": {
-      "optional": true
-    }
+  "devDependencies": {
+    "@types/node": "24.0.0",
+    "tsx": "4.22.3",
+    "typescript": "5.5.4"
   }
 }

@@ -21,8 +21,8 @@ export interface AuditReport {
   findings: Finding[];
   totalParsedLines: number;
   engine: string;
+  mode: "build" | "prod";
   scannedEnvFiles: string[];
-  cleanEnv: Record<string, string>;
   aiAdvisory: string | null;
   hasBlockingIssues: boolean;
   exitCode: number;
@@ -99,7 +99,7 @@ export class AuditRunner {
     }
 
     // 3. AI Unknown Variables Fallback (if enabled and key present)
-    const canUseAi = options.enableAi !== false && Boolean(process.env.GEMINI_API_KEY);
+    const canUseAi = options.enableAi === true && Boolean(process.env.GEMINI_API_KEY);
     if (unknownKeys.length > 0 && canUseAi) {
       const aiErrors = await analyzeUnknownVariablesWithAi(unknownKeys, accumulatedCleanEnv);
       for (const err of aiErrors) {
@@ -110,8 +110,9 @@ export class AuditRunner {
           title: `AI Configuration Finding: ${field}`,
           message: err.message,
           severity: "medium",
-          category: "security",
-          source: "ai-advisor",
+            category: "security",
+            source: "ai-advisor",
+            confidence: "advisory",
           file: meta.fileName,
           line: meta.line,
           key: field,
@@ -126,7 +127,6 @@ export class AuditRunner {
       packageManager: context.packageManager,
       dependencies: context.dependencies,
       devDependencies: context.devDependencies,
-      runtimeEnv: accumulatedCleanEnv,
     };
 
     const osvScanner = new OsvScanner();
@@ -136,6 +136,18 @@ export class AuditRunner {
         throw new Error(`OSV request failed: ${osvResult.error || "Unknown error"}`);
       }
       collector.addMany(osvResult.findings);
+      if (osvResult.status === "partial") {
+        collector.add({
+          id: "scanner-osv-partial",
+          title: "OSV scan completed partially",
+          message: osvResult.error ?? "Some dependencies were not verified by OSV.",
+          severity: "medium",
+          category: "reliability",
+          source: "osv",
+          confidence: "confirmed",
+          evidence: (osvResult.diagnostics ?? []).join(" "),
+        });
+      }
     }
 
     const compatScanner = new CompatibilityEngine();
@@ -159,15 +171,16 @@ export class AuditRunner {
       });
     }
 
-    const hasBlockingIssues = collector.hasBlockingIssues();
+    const mode = options.mode ?? "build";
+    const hasBlockingIssues = collector.hasBlockingIssues(mode === "prod" ? "medium" : "high");
     const exitCode = hasBlockingIssues ? 1 : 0;
 
     return {
       findings: allFindings,
       totalParsedLines,
       engine: activeEngineName,
+      mode,
       scannedEnvFiles: context.envFiles,
-      cleanEnv: accumulatedCleanEnv,
       aiAdvisory,
       hasBlockingIssues,
       exitCode,

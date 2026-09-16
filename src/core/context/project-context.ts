@@ -14,11 +14,33 @@ export interface ProjectContext {
 export function createProjectContext(projectPath: string = process.cwd()): ProjectContext {
   let packageManager: ProjectContext["packageManager"] = "npm";
 
-  if (fs.existsSync(path.join(projectPath, "pnpm-lock.yaml"))) {
+  const pkgPath = path.join(projectPath, "package.json");
+  let packageJson: Record<string, unknown> = {};
+  if (fs.existsSync(pkgPath)) {
+    try {
+      packageJson = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
+    } catch {
+      throw new Error(`Unable to parse package.json at ${pkgPath}`);
+    }
+  }
+
+  const declaredManager = typeof packageJson.packageManager === "string"
+    ? packageJson.packageManager.split("@")[0]
+    : undefined;
+  const hasSupportedDeclaredManager =
+    declaredManager === "pnpm" ||
+    declaredManager === "npm" ||
+    declaredManager === "yarn" ||
+    declaredManager === "bun";
+  if (hasSupportedDeclaredManager) {
+    packageManager = declaredManager;
+  }
+
+  if (!hasSupportedDeclaredManager && fs.existsSync(path.join(projectPath, "pnpm-lock.yaml"))) {
     packageManager = "pnpm";
-  } else if (fs.existsSync(path.join(projectPath, "yarn.lock"))) {
+  } else if (!hasSupportedDeclaredManager && fs.existsSync(path.join(projectPath, "yarn.lock"))) {
     packageManager = "yarn";
-  } else if (fs.existsSync(path.join(projectPath, "bun.lockb"))) {
+  } else if (!hasSupportedDeclaredManager && fs.existsSync(path.join(projectPath, "bun.lockb"))) {
     packageManager = "bun";
   }
 
@@ -26,24 +48,17 @@ export function createProjectContext(projectPath: string = process.cwd()): Proje
   try {
     envFiles = fs
       .readdirSync(projectPath)
-      .filter((file) => file.startsWith(".env"));
+      .filter((file) => file.startsWith(".env"))
+      .filter((file) => file !== ".env.example" && file !== ".env.test")
+      .sort();
   } catch {
     envFiles = [];
   }
 
   let dependencies: Record<string, string> = {};
   let devDependencies: Record<string, string> = {};
-  const pkgPath = path.join(projectPath, "package.json");
-
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-      dependencies = pkg.dependencies ?? {};
-      devDependencies = pkg.devDependencies ?? {};
-    } catch {
-      // Ignored
-    }
-  }
+  dependencies = (packageJson.dependencies as Record<string, string> | undefined) ?? {};
+  devDependencies = (packageJson.devDependencies as Record<string, string> | undefined) ?? {};
 
   return {
     projectPath,

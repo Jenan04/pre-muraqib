@@ -23,11 +23,16 @@ export class FindingCollector {
     return this.findings.filter((f) => f.severity === severity);
   }
 
-  hasBlockingIssues(): boolean {
-    return this.findings.some(
-      (f) => f.severity === "critical" || f.severity === "high"
-    );
-  }
+  hasBlockingIssues(minimumSeverity: "high" | "medium" = "high"): boolean {
+  const blocking =
+    minimumSeverity === "medium"
+      ? new Set(["critical", "high", "medium"])
+      : new Set(["critical", "high"]);
+
+  return this.findings.some((finding) =>
+    blocking.has(finding.severity)
+  );
+}
 
   clear(): void {
     this.findings = [];

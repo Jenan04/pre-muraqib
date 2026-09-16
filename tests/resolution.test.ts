@@ -100,13 +100,13 @@ test("ResolutionEngine: generates real ResolutionPlan with candidate analysis an
   const topPlan = plans[0];
   assert.ok(topPlan);
 
-  assert.equal(topPlan.planName, "Plan A — Safe Upgrade");
+  assert.equal(topPlan.planName, "Plan A — Candidate Upgrade");
   assert.equal(topPlan.changes.length, 1);
   assert.equal(topPlan.changes[0]?.packageName, "axios");
   assert.equal(topPlan.changes[0]?.currentVersion, "0.21.1");
   assert.equal(topPlan.changes[0]?.targetVersion, "1.8.2");
   assert.equal(topPlan.changes[0]?.direction, "upgrade");
-  assert.equal(topPlan.compatibility, "Compatible");
+  assert.equal(topPlan.compatibility, "Unknown");
   assert.equal(topPlan.risk, "Medium");
   assert.deepEqual(topPlan.affectedPackages, ["axios"]);
 });
@@ -293,4 +293,63 @@ test("APPROVAL BOUNDARY: Approved YES mutates package.json with exact planned ch
   const updatedPkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
   assert.equal(updatedPkg.dependencies.axios, "^1.8.2", "axios must be updated to ^1.8.2");
   assert.equal(updatedPkg.dependencies.lodash, "^4.17.21", "unrelated dependencies must remain untouched");
+});
+
+test("STALE PLAN: lockfile changes invalidate a fingerprinted plan before mutation", async () => {
+  const graph = createIsolatedFixture({ dependencies: { axios: "^0.21.1" } });
+  const pkgPath = path.join(graph.projectPath, "package.json");
+  const initialPkgContent = fs.readFileSync(pkgPath, "utf8");
+
+  const plan: ResolutionPlan = {
+    id: "plan-axios",
+    title: "Candidate Upgrade",
+    planName: "Plan A — Candidate Upgrade",
+    reason: "Candidate",
+    changes: [{
+      packageName: "axios",
+      currentVersion: "0.21.1",
+      targetVersion: "1.8.2",
+      direction: "upgrade",
+    }],
+    findingsResolved: [],
+    securityImpact: "Requires verification",
+    compatibility: "Unknown",
+    risk: "Medium",
+    affectedPackages: ["axios"],
+    baseFingerprint: graph.createFingerprint(),
+  };
+
+  fs.appendFileSync(path.join(graph.projectPath, "pnpm-lock.yaml"), "# changed\n");
+  const result = await new ResolutionApplier(graph).apply(plan, "approved");
+
+  assert.equal(result.status, "stale");
+  assert.equal(fs.readFileSync(pkgPath, "utf8"), initialPkgContent);
+});
+
+test("MUTATION SAFETY: complex dependency ranges are rejected instead of rewritten", async () => {
+  const graph = createIsolatedFixture({ dependencies: { axios: ">=0.21.1 <2" } });
+  const pkgPath = path.join(graph.projectPath, "package.json");
+  const initialPkgContent = fs.readFileSync(pkgPath, "utf8");
+  const plan: ResolutionPlan = {
+    id: "plan-axios",
+    title: "Candidate Upgrade",
+    planName: "Plan A — Candidate Upgrade",
+    reason: "Candidate",
+    changes: [{
+      packageName: "axios",
+      currentVersion: ">=0.21.1 <2",
+      targetVersion: "1.8.2",
+      direction: "upgrade",
+    }],
+    findingsResolved: [],
+    securityImpact: "Requires verification",
+    compatibility: "Unknown",
+    risk: "Medium",
+    affectedPackages: ["axios"],
+  };
+
+  const result = await new ResolutionApplier(graph).apply(plan, "approved");
+  assert.equal(result.status, "failed");
+  assert.match(result.message, /Unsupported version declaration/);
+  assert.equal(fs.readFileSync(pkgPath, "utf8"), initialPkgContent);
 });
