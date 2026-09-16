@@ -8,7 +8,7 @@ export function formatSummaryText(report: AuditReport): string {
   summary += `• Total Findings: ${report.findings.length === 0 ? styleText("green", "0") : styleText("yellow", String(report.findings.length))}\n`;
 
   if (!report.hasBlockingIssues && report.findings.length === 0) {
-    summary += `• Status: ${styleText("green", "✔ Clean, Secure Syntax & Safe Dependencies")}`;
+    summary += `• Status: ${styleText("green", "✔ No blocking findings detected by completed checks")}`;
   } else if (!report.hasBlockingIssues) {
     summary += `• Status: ${styleText("yellow", "⚠ Informational warnings detected (Non-blocking)")}`;
   } else {

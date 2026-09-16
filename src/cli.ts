@@ -22,13 +22,50 @@ async function main() {
       json: {
         type: "boolean",
       },
+      ai: {
+        type: "boolean",
+      },
+      help: {
+        type: "boolean",
+        short: "h",
+      },
     },
     allowPositionals: true,
-    strict: false,
+    strict: true,
   });
 
   const command = positionals[0] || "audit";
   const isJson = Boolean(values.json);
+
+  if (values.help) {
+    console.log(`Muraqib — local-first DevSecOps audit CLI
+
+Usage:
+  muraqib audit [-e build|prod] [--engine custom|zod|valibot|arktype] [--json] [--ai]
+  muraqib resolve
+
+Options:
+  -e, --env       Blocking policy mode (build or prod)
+      --engine    Environment validation engine
+      --json      Machine-readable output
+      --ai        Enable optional AI advisory output
+  -h, --help      Show this help`);
+    return;
+  }
+
+  if (command !== "audit" && command !== "resolve") {
+    throw new Error(`Unknown command '${command}'. Use --help for usage.`);
+  }
+
+  if (typeof values.env === "string" && values.env !== "build" && values.env !== "prod") {
+    throw new Error(`Invalid environment mode '${values.env}'. Expected 'build' or 'prod'.`);
+  }
+
+  const allowedEngines = new Set(["custom", "zod", "valibot", "arktype"]);
+  if (typeof values.engine === "string" && !allowedEngines.has(values.engine)) {
+    throw new Error(`Invalid validation engine '${values.engine}'.`);
+  }
+
   const context = createProjectContext(process.cwd());
 
   if (command === "resolve") {
@@ -37,7 +74,6 @@ async function main() {
   }
 
   if (!isJson) {
-    console.clear();
     x.intro(
       `${styleText(["bgCyan", "black"], "Muraqib 🛡️ ")} ${styleText("dim", "◈ DevSecOps Config & Dependency Auditor")}`
     );
@@ -90,14 +126,27 @@ async function main() {
     report = await runner.run(context, {
       mode: mode === "prod" ? "prod" : "build",
       engine: preferredEngine,
-      enableAi: true,
+      enableAi: Boolean(values.ai),
     });
   } catch (err: unknown) {
     if (spinner) {
       spinner.stop("Audit execution failed!");
     }
     const msg = err instanceof Error ? err.message : String(err);
-    if (!isJson) {
+    if (isJson) {
+      console.log(
+        JSON.stringify(
+          {
+            schemaVersion: "1.0",
+            status: "error",
+            exitCode: 3,
+            error: { code: "AUDIT_EXECUTION_FAILED", message: msg },
+          },
+          null,
+          2
+        )
+      );
+    } else {
       console.log("");
       x.outro(
         styleText("red", "Muraqib scan failed\n\n") +
@@ -122,7 +171,7 @@ async function main() {
 
   if (report.findings.some((f) => f.dependencyProblem !== undefined)) {
     console.log(
-      `  ${styleText("cyan", "💡 Tip:")} Run ${styleText(["bold", "cyan"], "muraqib resolve")} to inspect and apply safe dependency resolutions.\n`
+      `  ${styleText("cyan", "💡 Tip:")} Run ${styleText(["bold", "cyan"], "muraqib resolve")} to inspect evidence-based dependency resolution candidates.\n`
     );
   }
 
@@ -142,12 +191,18 @@ async function main() {
     );
     process.exit(1);
   } else {
-    x.outro(styleText("green", "Everything looks secure! Stay safe! ✨"));
+    x.outro(
+      styleText(
+        "green",
+        "No blocking findings were detected by the checks that completed. ✨"
+      )
+    );
     process.exit(0);
   }
 }
 
 main().catch((err) => {
-  console.error("An unhandled error occurred during Muraqib execution:", err);
-  process.exit(3);
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`Muraqib could not start: ${message}`);
+  process.exitCode = 3;
 });

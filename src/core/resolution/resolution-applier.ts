@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import type {
   ResolutionPlan,
   ApprovalDecision,
@@ -46,6 +46,8 @@ export class ResolutionApplier {
       };
     }
 
+    const originalFiles = this.captureProjectFiles();
+
     // 3. MUTATION: Update package.json
     try {
       this.mutatePackageJson(plan.changes);
@@ -63,11 +65,13 @@ export class ResolutionApplier {
       this.runPackageManagerInstall();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      this.restoreProjectFiles(originalFiles);
       return {
-        applied: true,
+        applied: false,
         status: "failed",
-        message: `Dependencies updated in package.json, but package manager failed: ${msg}`,
+        message: `Package manager failed. package.json and the lockfile were restored; run a clean install before continuing: ${msg}`,
         appliedChanges: plan.changes,
+        rolledBack: true,
       };
     }
 
@@ -81,12 +85,14 @@ export class ResolutionApplier {
         .map((r) => `${r.step} (${r.message})`)
         .join(", ");
 
+      this.restoreProjectFiles(originalFiles);
       return {
-        applied: true,
+        applied: false,
         status: "failed",
-        message: `Resolution was applied, but verification failed: ${failedSteps}`,
+        message: `Verification failed. package.json and the lockfile were restored; run a clean install before continuing: ${failedSteps}`,
         appliedChanges: plan.changes,
         verificationResults,
+        rolledBack: true,
       };
     }
 
@@ -106,6 +112,13 @@ export class ResolutionApplier {
     const pkgPath = path.join(this.graph.projectPath, "package.json");
     if (!fs.existsSync(pkgPath)) {
       return { valid: false, reason: "package.json no longer exists" };
+    }
+
+    if (plan.baseFingerprint && this.graph.createFingerprint() !== plan.baseFingerprint) {
+      return {
+        valid: false,
+        reason: "project manifest, lockfile, or package-manager configuration changed",
+      };
     }
 
     let pkg: any;
@@ -172,9 +185,16 @@ export class ResolutionApplier {
       ] as const) {
         if (pkg[section] && pkg[section][change.packageName]) {
           const currentDecl: string = pkg[section][change.packageName];
-          // Preserve prefix (^, ~, >=, etc.) if current declaration had one
-          const prefixMatch = currentDecl.match(/^([^\d]+)/);
-          const prefix = prefixMatch ? prefixMatch[1] : "";
+          const simpleDeclaration = currentDecl.match(
+            /^([~^]?)(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/
+          );
+          if (!simpleDeclaration) {
+            throw new Error(
+              `Unsupported version declaration '${currentDecl}' for '${change.packageName}'. ` +
+              "Only exact, caret, and tilde semver declarations can be changed automatically."
+            );
+          }
+          const prefix = simpleDeclaration[1] ?? "";
           pkg[section][change.packageName] = `${prefix}${target}`;
           matchedSection = true;
           break;
@@ -190,25 +210,67 @@ export class ResolutionApplier {
     fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
   }
 
+  private captureProjectFiles(): Map<string, Buffer | null> {
+    const files = new Set<string>([
+      path.join(this.graph.projectPath, "package.json"),
+    ]);
+    files.add(this.graph.lockfilePath ?? this.expectedLockfilePath());
+
+    const snapshot = new Map<string, Buffer | null>();
+    for (const file of files) {
+      snapshot.set(file, fs.existsSync(file) ? fs.readFileSync(file) : null);
+    }
+    return snapshot;
+  }
+
+  private expectedLockfilePath(): string {
+    const lockfiles: Record<string, string> = {
+      pnpm: "pnpm-lock.yaml",
+      npm: "package-lock.json",
+      yarn: "yarn.lock",
+      bun: "bun.lockb",
+    };
+    return path.join(this.graph.projectPath, lockfiles[this.graph.packageManager]!);
+  }
+
+  private restoreProjectFiles(snapshot: Map<string, Buffer | null>): void {
+    for (const [file, content] of snapshot) {
+      if (content === null) {
+        if (fs.existsSync(file)) fs.unlinkSync(file);
+      } else {
+        fs.writeFileSync(file, content);
+      }
+    }
+  }
+
   /**
    * Runs the correct package manager without hardcoding.
    */
   private runPackageManagerInstall(): void {
     const manager = this.graph.packageManager;
-    let command = "npm install";
-
-    if (manager === "pnpm") {
-      command = "pnpm install";
-    } else if (manager === "yarn") {
-      command = "yarn install";
-    } else if (manager === "bun") {
-      command = "bun install";
-    }
-
-    execSync(command, {
+    execFileSync(manager, ["install"], {
       cwd: this.graph.projectPath,
       stdio: "pipe",
       env: process.env,
+      timeout: 300_000,
+    });
+  }
+
+  private runProjectCommand(kind: "typecheck" | "tests"): void {
+    const manager = this.graph.packageManager;
+    const args = kind === "tests"
+      ? ["run", "test"]
+      : manager === "npm"
+        ? ["exec", "--", "tsc", "--noEmit"]
+        : manager === "bun"
+          ? ["x", "tsc", "--noEmit"]
+          : ["exec", "tsc", "--noEmit"];
+
+    execFileSync(manager, args, {
+      cwd: this.graph.projectPath,
+      stdio: "pipe",
+      env: process.env,
+      timeout: kind === "tests" ? 300_000 : 60_000,
     });
   }
 
@@ -227,6 +289,7 @@ export class ResolutionApplier {
     results.push({
       step: "dependencies",
       passed: true,
+      status: "passed",
       message: "Dependencies installed and lockfile updated.",
     });
 
@@ -234,14 +297,11 @@ export class ResolutionApplier {
     const tsconfigPath = path.join(this.graph.projectPath, "tsconfig.json");
     if (fs.existsSync(tsconfigPath)) {
       try {
-        execSync("npx tsc --noEmit", {
-          cwd: this.graph.projectPath,
-          stdio: "pipe",
-          timeout: 30000,
-        });
+        this.runProjectCommand("typecheck");
         results.push({
           step: "typecheck",
           passed: true,
+          status: "passed",
           message: "TypeScript typecheck passed.",
         });
       } catch (err: unknown) {
@@ -249,9 +309,17 @@ export class ResolutionApplier {
         results.push({
           step: "typecheck",
           passed: false,
+          status: this.classifyCommandFailure(err),
           message: msg,
         });
       }
+    } else {
+      results.push({
+        step: "typecheck",
+        passed: true,
+        status: "skipped",
+        message: "Typecheck skipped because tsconfig.json is not present.",
+      });
     }
 
     // 3. Tests verification (optional, run only if test script is defined)
@@ -260,19 +328,28 @@ export class ResolutionApplier {
     );
     if (pkgJson.scripts?.test && !pkgJson.scripts.test.includes("no test specified")) {
       try {
-        // Quick verification run
+        this.runProjectCommand("tests");
         results.push({
           step: "tests",
           passed: true,
+          status: "passed",
           message: "Project tests passed.",
         });
       } catch (err: unknown) {
         results.push({
           step: "tests",
           passed: false,
+          status: this.classifyCommandFailure(err),
           message: String(err),
         });
       }
+    } else {
+      results.push({
+        step: "tests",
+        passed: true,
+        status: "skipped",
+        message: "Tests skipped because no runnable test script is configured.",
+      });
     }
 
     // 4. Security scan verification
@@ -284,36 +361,47 @@ export class ResolutionApplier {
         packageManager: this.graph.packageManager,
         dependencies: pkgJson.dependencies ?? {},
         devDependencies: pkgJson.devDependencies ?? {},
-        runtimeEnv: {},
       };
 
       if (osvScanner.supports(scanContext)) {
         const scanRes = await osvScanner.scan(scanContext);
-        // Check if any resolved package is still vulnerable
-        const changedNames = new Set(plan.changes.map((c) => c.packageName));
-        const unresolved = scanRes.findings.filter(
-          (f) => f.key && changedNames.has(f.key)
-        );
-
-        if (unresolved.length > 0) {
+        if (scanRes.status !== "success") {
           results.push({
             step: "securityScan",
             passed: false,
-            message: `Package still has ${unresolved.length} unresolved advisories.`,
+            status: scanRes.status === "unavailable" ? "unavailable" : "infrastructure-error",
+            message: scanRes.error ?? `Security scan completed with status '${scanRes.status}'.`,
           });
         } else {
-          results.push({
-            step: "securityScan",
-            passed: true,
-            message: "Security scan confirmed vulnerability resolved.",
-          });
+          // Check if any resolved package is still vulnerable
+          const changedNames = new Set(plan.changes.map((c) => c.packageName));
+          const unresolved = scanRes.findings.filter(
+            (f) => f.key && changedNames.has(f.key)
+          );
+
+          if (unresolved.length > 0) {
+            results.push({
+              step: "securityScan",
+              passed: false,
+              status: "failed",
+              message: `Package still has ${unresolved.length} unresolved advisories.`,
+            });
+          } else {
+            results.push({
+              step: "securityScan",
+              passed: true,
+              status: "passed",
+              message: "Security scan confirmed vulnerability resolved.",
+            });
+          }
         }
       }
-    } catch {
+    } catch (err: unknown) {
       results.push({
         step: "securityScan",
-        passed: true,
-        message: "Security scan verified.",
+        passed: false,
+        status: "infrastructure-error",
+        message: `Security scan could not complete: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
 
@@ -326,33 +414,51 @@ export class ResolutionApplier {
         packageManager: this.graph.packageManager,
         dependencies: pkgJson.dependencies ?? {},
         devDependencies: pkgJson.devDependencies ?? {},
-        runtimeEnv: {},
       };
 
       if (compatScanner.supports(scanContext)) {
         const compatRes = await compatScanner.scan(scanContext);
-        if (compatRes.findings.length > 0) {
+        if (compatRes.status !== "success") {
           results.push({
             step: "compatibilityScan",
             passed: false,
+            status: compatRes.status === "unavailable" ? "unavailable" : "infrastructure-error",
+            message: compatRes.error ?? `Compatibility scan completed with status '${compatRes.status}'.`,
+          });
+        } else if (compatRes.findings.length > 0) {
+          results.push({
+            step: "compatibilityScan",
+            passed: false,
+            status: "failed",
             message: `Detected ${compatRes.findings.length} compatibility conflicts.`,
           });
         } else {
           results.push({
             step: "compatibilityScan",
             passed: true,
+            status: "passed",
             message: "Compatibility scan passed with no conflicts.",
           });
         }
       }
-    } catch {
+    } catch (err: unknown) {
       results.push({
         step: "compatibilityScan",
-        passed: true,
-        message: "Compatibility scan passed.",
+        passed: false,
+        status: "infrastructure-error",
+        message: `Compatibility scan could not complete: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
 
     return results;
+  }
+
+  private classifyCommandFailure(error: unknown): "failed" | "unavailable" | "timed-out" | "infrastructure-error" {
+    if (typeof error === "object" && error !== null && "code" in error) {
+      const code = String((error as { code?: unknown }).code ?? "");
+      if (code === "ENOENT") return "unavailable";
+      if (code === "ETIMEDOUT") return "timed-out";
+    }
+    return error instanceof Error ? "failed" : "infrastructure-error";
   }
 }
