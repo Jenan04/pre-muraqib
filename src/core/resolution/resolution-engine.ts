@@ -31,47 +31,53 @@ export class ResolutionEngine {
         continue;
       }
 
-      // 1. Identify Safe Upgrade Candidates
+      // 1. Identify OSV fixed-version candidates. These are candidates, not proof of safety.
       // Sort fixed versions in ascending semver
       const sortedCandidates = [...fixedVersions].sort((a, b) => this.compareSemver(a, b));
-      // Minimal safe candidate that resolves all advisories
-      const minSafeCandidate = sortedCandidates[sortedCandidates.length - 1];
-      if (!minSafeCandidate) continue;
+      // Select the highest fixed boundary reported across applicable advisories.
+      // A post-change OSV query is still required before the resolution is accepted.
+      const selectedCandidate = sortedCandidates[sortedCandidates.length - 1];
+      if (!selectedCandidate) continue;
 
       const currentVer = problem.installedVersion;
-      const isUp = this.compareSemver(minSafeCandidate, currentVer) > 0;
+      const isUp = this.compareSemver(selectedCandidate, currentVer) > 0;
       const direction: ResolutionDirection = isUp ? "upgrade" : "downgrade";
 
       // Compatibility check
-      const compat = this.graph.checkCompatibility(problem.package, minSafeCandidate);
+      const compat = this.graph.checkCompatibility(problem.package, selectedCandidate);
 
       // Assess Risk
       const currentMajor = parseInt(currentVer.split(".")[0] || "0", 10);
-      const targetMajor = parseInt(minSafeCandidate.split(".")[0] || "0", 10);
+      const targetMajor = parseInt(selectedCandidate.split(".")[0] || "0", 10);
       const isMajorJump = targetMajor !== currentMajor;
       const risk: RiskLevel = isMajorJump ? "Medium" : "Low";
 
       const baseChange: PackageChange = {
         packageName: problem.package,
         currentVersion: currentVer,
-        targetVersion: minSafeCandidate,
+        targetVersion: selectedCandidate,
         direction,
         reason: `Resolves ${problem.advisoryCount} applicable OSV security advisories.`,
       };
 
-      // Plan A: Minimal / Safe Upgrade
+      // Plan A: OSV-derived candidate
       const planA: ResolutionPlan = {
-        id: `plan-${problem.package}-safe`,
-        title: `Safe ${direction === "upgrade" ? "Upgrade" : "Downgrade"}`,
-        planName: `Plan A — Safe ${direction === "upgrade" ? "Upgrade" : "Downgrade"}`,
-        reason: `Resolves ${problem.advisoryCount} applicable OSV security advisories with minimal justified changes.`,
+        id: `plan-${problem.package}-candidate`,
+        title: `Candidate ${direction === "upgrade" ? "Upgrade" : "Downgrade"}`,
+        planName: `Plan A — Candidate ${direction === "upgrade" ? "Upgrade" : "Downgrade"}`,
+        reason: `Uses an OSV fixed-version boundary reported for ${problem.advisoryCount} applicable advisories.`,
         changes: [baseChange],
         findingsResolved: [finding],
-        securityImpact: "Resolves applicable OSV vulnerabilities.",
+        securityImpact: "Expected to address applicable OSV advisories; requires a successful post-change scan.",
         compatibility: compat.status,
         risk,
         affectedPackages: [problem.package],
-        explanation: `Updates ${problem.package} from ${currentVer} to ${minSafeCandidate} to resolve all known vulnerabilities.`,
+        explanation: `Proposes ${problem.package} ${currentVer} → ${selectedCandidate}. This is a candidate until native resolution and verification complete.`,
+        baseFingerprint: this.graph.createFingerprint(),
+        limitations: [
+          "Target runtime compatibility is not proven by OSV fixed-version data.",
+          "A native package-manager resolution and post-change verification are required.",
+        ],
       };
       plans.push(planA);
 
@@ -84,13 +90,13 @@ export class ResolutionEngine {
           if (relPkg) {
             const relCurrent = relPkg.installedVersion || relPkg.declaredVersion;
             // Coordinated target: matching target major or compatible version
-            const relTarget = minSafeCandidate; // e.g. @prisma/client matches prisma
+            const relTarget = selectedCandidate;
             coordinatedChanges.push({
               packageName: relName,
               currentVersion: relCurrent,
               targetVersion: relTarget,
               direction: "coordinated-upgrade",
-              reason: `Maintains ecosystem compatibility with ${problem.package}@${minSafeCandidate}.`,
+              reason: `Known exact-version family pairing with ${problem.package}@${selectedCandidate}.`,
             });
           }
         }
@@ -102,45 +108,19 @@ export class ResolutionEngine {
           reason: `Coordinates upgrade of ${problem.package} with related ecosystem packages (${relatedPackages.join(", ")}).`,
           changes: coordinatedChanges,
           findingsResolved: [finding],
-          securityImpact: "Resolves applicable OSV vulnerabilities and keeps related packages in sync.",
-          compatibility: "Compatible",
+          securityImpact: "Expected to address applicable OSV advisories; requires a successful post-change scan.",
+          compatibility: "Unknown",
           risk: isMajorJump ? "Medium" : "Low",
           affectedPackages: coordinatedChanges.map((c) => c.packageName),
-          explanation: `Simultaneously upgrades ${coordinatedChanges.map((c) => c.packageName).join(" and ")} to prevent breaking changes.`,
+          explanation: `Proposes an exact-version family update for ${coordinatedChanges.map((c) => c.packageName).join(" and ")}; native resolution is still required.`,
+          baseFingerprint: this.graph.createFingerprint(),
+          limitations: ["The coordinated candidate has not yet been resolved by the native package manager."],
         };
         plans.push(planB);
       }
 
-      // Check for Downgrade alternative if available
-      // If the current version is vulnerable but an older LTS/patch is unaffected
-      const olderCandidates = sortedCandidates.filter((v) => this.compareSemver(v, currentVer) < 0);
-      if (olderCandidates.length > 0) {
-        const safeDowngradeTarget = olderCandidates[olderCandidates.length - 1];
-        if (safeDowngradeTarget) {
-          const planC: ResolutionPlan = {
-            id: `plan-${problem.package}-downgrade`,
-            title: "Compatible Downgrade",
-            planName: "Plan C — Compatible Downgrade",
-            reason: `Reverts to older safe release ${safeDowngradeTarget} that is unaffected by recent vulnerabilities.`,
-            changes: [
-              {
-                packageName: problem.package,
-                currentVersion: currentVer,
-                targetVersion: safeDowngradeTarget,
-                direction: "downgrade",
-                reason: "Reverts to unaffected prior release.",
-              },
-            ],
-            findingsResolved: [finding],
-            securityImpact: "Removes vulnerable code by reverting to an unaffected stable release.",
-            compatibility: "Compatible",
-            risk: "Medium",
-            affectedPackages: [problem.package],
-            explanation: `Downgrades ${problem.package} from ${currentVer} to ${safeDowngradeTarget}.`,
-          };
-          plans.push(planC);
-        }
-      }
+      // Automatic downgrade plans are intentionally deferred. Older fixed boundaries
+      // do not prove that a downgrade is secure or compatible with the application.
     }
 
     return this.rankPlans(plans);

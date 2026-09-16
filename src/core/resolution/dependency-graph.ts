@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import type { DependencyType } from "../findings/finding.js";
 
 export interface PackageMetadata {
@@ -39,22 +40,31 @@ export class DependencyGraph {
 
     this.projectEngines = rootPkg.engines;
 
-    // Detect Package Manager and Lockfile
-    if (fs.existsSync(path.join(projectPath, "pnpm-lock.yaml"))) {
+    const declaredManager = typeof rootPkg.packageManager === "string"
+      ? rootPkg.packageManager.split("@")[0]
+      : undefined;
+    const supportedManagers = new Set<PackageManagerName>(["pnpm", "npm", "yarn", "bun"]);
+    const lockfiles: Record<PackageManagerName, string> = {
+      pnpm: "pnpm-lock.yaml",
+      npm: "package-lock.json",
+      yarn: "yarn.lock",
+      bun: "bun.lockb",
+    };
+
+    if (declaredManager && supportedManagers.has(declaredManager as PackageManagerName)) {
+      this.packageManager = declaredManager as PackageManagerName;
+    } else if (fs.existsSync(path.join(projectPath, lockfiles.pnpm))) {
       this.packageManager = "pnpm";
-      this.lockfilePath = path.join(projectPath, "pnpm-lock.yaml");
-    } else if (fs.existsSync(path.join(projectPath, "yarn.lock"))) {
+    } else if (fs.existsSync(path.join(projectPath, lockfiles.yarn))) {
       this.packageManager = "yarn";
-      this.lockfilePath = path.join(projectPath, "yarn.lock");
-    } else if (fs.existsSync(path.join(projectPath, "bun.lockb"))) {
+    } else if (fs.existsSync(path.join(projectPath, lockfiles.bun))) {
       this.packageManager = "bun";
-      this.lockfilePath = path.join(projectPath, "bun.lockb");
-    } else if (fs.existsSync(path.join(projectPath, "package-lock.json"))) {
-      this.packageManager = "npm";
-      this.lockfilePath = path.join(projectPath, "package-lock.json");
     } else {
       this.packageManager = "npm";
     }
+
+    const selectedLockfile = path.join(projectPath, lockfiles[this.packageManager]);
+    if (fs.existsSync(selectedLockfile)) this.lockfilePath = selectedLockfile;
 
     // Populate declared packages
     const sections: Array<{ type: DependencyType; obj: Record<string, string> | undefined }> = [
@@ -119,25 +129,33 @@ export class DependencyGraph {
       related.add("react");
     }
 
-    // TypeScript coordination with major framework upgrades
-    if (
-      (packageName === "prisma" || packageName === "typescript") &&
-      this.declaredPackages.has("typescript") &&
-      packageName !== "typescript"
-    ) {
-      // Prisma major upgrades often pair with TypeScript
-      related.add("typescript");
-    }
+    return Array.from(related);
+  }
 
-    // Check peer dependencies: any declared package that has a peer dependency on packageName
-    for (const [otherName, otherMeta] of this.declaredPackages.entries()) {
-      if (otherName === packageName) continue;
-      if (otherMeta.peerDependencies && otherMeta.peerDependencies[packageName]) {
-        related.add(otherName);
+  public createFingerprint(): string {
+    const hash = createHash("sha256");
+    const relevantFiles = [
+      "package.json",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "bun.lockb",
+      ".npmrc",
+      ".yarnrc.yml",
+      "pnpm-workspace.yaml",
+    ];
+
+    hash.update(`manager:${this.packageManager}\n`);
+    for (const fileName of relevantFiles) {
+      const filePath = path.join(this.projectPath, fileName);
+      hash.update(`file:${fileName}\n`);
+      if (fs.existsSync(filePath)) {
+        hash.update(fs.readFileSync(filePath));
+      } else {
+        hash.update("<missing>");
       }
     }
-
-    return Array.from(related);
+    return hash.digest("hex");
   }
 
   /**
@@ -189,6 +207,9 @@ export class DependencyGraph {
       }
     }
 
-    return { status: "Compatible" };
+    return {
+      status: "Unknown",
+      reason: "No conflict was detected from current metadata; target package metadata and native resolution have not been verified.",
+    };
   }
 }

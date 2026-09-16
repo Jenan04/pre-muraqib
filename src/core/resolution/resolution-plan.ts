@@ -29,11 +29,22 @@ export interface ResolutionPlan {
   risk: RiskLevel;
   affectedPackages: string[];
   explanation?: string;
+  baseFingerprint?: string;
+  limitations?: string[];
 }
+
+export type VerificationStatus =
+  | "passed"
+  | "failed"
+  | "unavailable"
+  | "skipped"
+  | "timed-out"
+  | "infrastructure-error";
 
 export interface VerificationStepResult {
   step: "dependencies" | "typecheck" | "tests" | "securityScan" | "compatibilityScan";
   passed: boolean;
+  status?: VerificationStatus;
   message?: string;
 }
 
@@ -43,4 +54,5 @@ export interface ResolutionResult {
   message: string;
   appliedChanges?: PackageChange[];
   verificationResults?: VerificationStepResult[];
+  rolledBack?: boolean;
 }
