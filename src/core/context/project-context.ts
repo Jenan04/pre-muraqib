@@ -9,7 +9,12 @@ export interface ProjectContext {
   envFiles: string[];
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
+  dockerfiles: string[];
+  composeFiles: string[];
+  dockerignoreFiles: string[];
 }
+
+import { discoverDockerFiles } from "./docker-discovery.js";
 
 export function createProjectContext(projectPath: string = process.cwd()): ProjectContext {
   let packageManager: ProjectContext["packageManager"] = "npm";
@@ -60,6 +65,8 @@ export function createProjectContext(projectPath: string = process.cwd()): Proje
   dependencies = (packageJson.dependencies as Record<string, string> | undefined) ?? {};
   devDependencies = (packageJson.devDependencies as Record<string, string> | undefined) ?? {};
 
+  const { dockerfiles, composeFiles, dockerignoreFiles } = discoverDockerFiles(projectPath);
+
   return {
     projectPath,
     packageManager,
@@ -68,5 +75,8 @@ export function createProjectContext(projectPath: string = process.cwd()): Proje
     envFiles,
     dependencies,
     devDependencies,
+    dockerfiles,
+    composeFiles,
+    dockerignoreFiles,
   };
 }
