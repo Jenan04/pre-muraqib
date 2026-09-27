@@ -21,7 +21,7 @@
     "start": "node dist/cli.js",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "prepack": "npm run build"
+    "prepack": "pnpm run build"
   },
   "repository": {
     "type": "git",
@@ -52,6 +52,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.3",
     "valibot": "^1.4.2",
+    "yaml": "^2.9.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

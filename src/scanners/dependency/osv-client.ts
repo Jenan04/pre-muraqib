@@ -1,4 +1,5 @@
 import https from "node:https";
+import http from "node:http";
 import { osvConfig } from "../../config/osv.config.js";
 
 export interface OsvVulnerabilityEvent {
@@ -65,7 +66,8 @@ export function queryOsv(
 
     let isHandled = false;
 
-    const req = https.request(options, (res) => {
+    const requestModule = osvConfig.protocol === "http:" ? http : https;
+    const req = requestModule.request(options, (res) => {
       let data = "";
       res.on("data", (chunk) => {
         data += chunk;

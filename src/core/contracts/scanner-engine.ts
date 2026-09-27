@@ -6,6 +6,9 @@ export interface ScanContext {
   packageManager?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  dockerfiles?: string[];
+  composeFiles?: string[];
+  dockerignoreFiles?: string[];
 }
 
 export type ScanStatus = "success" | "partial" | "failed" | "unavailable";
@@ -16,6 +19,8 @@ export interface ScanResult {
   findings: Finding[];
   error?: string;
   diagnostics?: string[];
+  scannedInputs?: string[];
+  skippedInputs?: string[];
 }
 
 export interface ScannerEngine {
