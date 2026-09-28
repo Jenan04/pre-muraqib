@@ -116,13 +116,16 @@ A proposed version is a candidate, not a guarantee that the update is safe or co
 
 ---
 
-## Exit Codes
+## Exit Codes and Coverage Policy
 
-- `0`: No blocking findings were detected by the checks that completed.
+- `0`: No blocking findings were detected by the checks that completed. A partial scan (e.g., absent Docker CLI, unreadable files) will still exit with 0 if no blocking findings are found in the parts that succeeded. The incomplete scope is explicitly noted in the report diagnostics.
 - `1`: One or more blocking findings were detected.
-- `3`: The audit could not complete reliably.
+- `3`: The audit could not complete reliably (e.g., a critical scanner crashed or failed entirely).
 
----
+Note on Docker checking: 
+- Invalid YAML in Compose files is treated as a validation finding (exit code 1 if blocking).
+- Unreadable files or an absent Docker CLI result in a partial scan (exit code 0 if no other blocking findings), adding an explicit diagnostic about what was skipped.
+- Image analysis (if unimplemented or not requested) does not downgrade a purely static audit to 'partial'.
 
 ## Security and Privacy Boundaries
 
@@ -152,6 +155,7 @@ Never place real credentials inside `.env.example`.
 - AI explanations may be inaccurate and must not replace deterministic scanners.
 - Rollback restores package metadata and the lockfile, but the installed `node_modules` tree may require a clean reinstall.
 - The project is not yet intended to serve as a complete production security platform.
+- Docker `COPY` analysis checks for sensitive files (`.env`, `.env.local`, `.env.production`) copied into a build stage. It supports `.dockerignore` and `<dockerfile>.dockerignore` applying to the context returned by `docker compose config`. It only claims that the file is copied into *a build stage*, not necessarily the final image (multi-stage tracking is limited). Remote contexts and dynamic contexts are not supported.
 
 ---
 

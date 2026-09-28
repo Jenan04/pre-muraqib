@@ -182,7 +182,15 @@ Options:
   x.note(formatSummaryText(report), "Muraqib Audit Summary");
 
   // 4. Outro & Exit
-  if (report.hasBlockingIssues) {
+  if (report.exitCode === 3) {
+    x.outro(
+      styleText(
+        "red",
+        "Muraqib audit could not complete reliably due to a scanner failure. 🛑"
+      )
+    );
+    process.exit(3);
+  } else if (report.exitCode === 1) {
     x.outro(
       styleText(
         "red",
