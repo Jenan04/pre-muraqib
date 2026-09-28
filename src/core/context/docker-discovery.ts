@@ -47,28 +47,30 @@ export function discoverDockerFiles(projectRoot: string): DockerDiscoveryResult 
     }
 
     for (const entry of entries) {
-      if (entry.isDirectory() && IGNORE_DIRS.has(entry.name)) {
-        continue;
-      }
-      
       const fullPath = path.join(dir, entry.name);
       
       let isDir = entry.isDirectory();
       let isFile = entry.isFile();
+      let targetName = entry.name;
 
       // Prevent symlink escape
       if (entry.isSymbolicLink()) {
         try {
           const realPath = fs.realpathSync(fullPath);
-          if (!realPath.startsWith(rootAbsolute)) {
+          if (realPath !== rootAbsolute && !realPath.startsWith(rootAbsolute + path.sep)) {
             continue;
           }
           const stat = fs.statSync(realPath);
           isDir = stat.isDirectory();
           isFile = stat.isFile();
+          targetName = path.basename(realPath);
         } catch {
           continue;
         }
+      }
+
+      if (isDir && (IGNORE_DIRS.has(entry.name) || (entry.isSymbolicLink() && IGNORE_DIRS.has(targetName)))) {
+        continue;
       }
 
       if (isDir) {
