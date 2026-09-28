@@ -8,12 +8,24 @@ export function formatSummaryText(report: AuditReport): string {
   summary += `• Total Findings: ${report.findings.length === 0 ? styleText("green", "0") : styleText("yellow", String(report.findings.length))}\n`;
 
   if (!report.hasBlockingIssues && report.findings.length === 0) {
-    summary += `• Status: ${styleText("green", "✔ No blocking findings detected by completed checks")}`;
+    summary += `• Status: ${styleText("green", "✔ No blocking findings detected by completed checks")}\n`;
   } else if (!report.hasBlockingIssues) {
-    summary += `• Status: ${styleText("yellow", "⚠ Informational warnings detected (Non-blocking)")}`;
+    summary += `• Status: ${styleText("yellow", "⚠ Informational warnings detected (Non-blocking)")}\n`;
   } else {
-    summary += `• Status: ${styleText("red", "✖ Fix required before deployment")}`;
+    summary += `• Status: ${styleText("red", "✖ Fix required before deployment")}\n`;
   }
 
-  return summary;
+  if (report.scannerCoverage.length > 0) {
+    summary += `\nScanner Coverage:\n`;
+    for (const coverage of report.scannerCoverage) {
+      const color = coverage.status === "success" ? "green" : (coverage.status === "partial" ? "yellow" : "red");
+      summary += `  - ${coverage.scanner}: ${styleText(color, coverage.status)}`;
+      if (coverage.scannedInputs.length > 0) {
+        summary += ` (${coverage.scannedInputs.length} files scanned)`;
+      }
+      summary += "\n";
+    }
+  }
+
+  return summary.trim();
 }

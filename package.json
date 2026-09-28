@@ -21,7 +21,7 @@
     "start": "node dist/cli.js",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "prepack": "npm run build"
+    "prepack": "pnpm run build"
   },
   "repository": {
     "type": "git",
@@ -48,10 +48,12 @@
     "@google/genai": "2.22.0",
     "arktype": "^2.0.0-rc.26",
     "axios": "1.18.0",
+    "ignore": "^7.0.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.3",
     "valibot": "^1.4.2",
+    "yaml": "^2.9.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
