@@ -87,7 +87,7 @@ export function discoverDockerFiles(projectRoot: string): DockerDiscoveryResult 
         }
         
         // Compose file discovery
-        if (lowerName === "compose.yaml" || lowerName === "compose.yml" || lowerName === "docker-compose.yml" || lowerName === "docker-compose.yaml" || lowerName.startsWith("docker-compose.override.")) {
+        if (lowerName === "compose.yaml" || lowerName === "compose.yml" || lowerName === "docker-compose.yml" || lowerName === "docker-compose.yaml" || lowerName === "compose.override.yaml" || lowerName === "compose.override.yml" || lowerName === "docker-compose.override.yaml" || lowerName === "docker-compose.override.yml") {
           composeFiles.push(path.relative(rootAbsolute, fullPath));
         }
       }

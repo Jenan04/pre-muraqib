@@ -25,6 +25,7 @@ export interface AuditOptions {
   mode?: "build" | "prod" | undefined;
   engine?: ValidationEngineName | undefined;
   enableAi?: boolean | undefined;
+  dockerNative?: boolean | undefined;
 }
 
 export interface AuditReport {
@@ -208,7 +209,7 @@ export class AuditRunner {
       }
     }
 
-    const dockerScanner = new DockerScanner();
+    const dockerScanner = new DockerScanner(undefined, options.dockerNative === true);
     if (dockerScanner.supports(scanContext)) {
       const dockerResult = await dockerScanner.scan(scanContext);
       scannerCoverage.push({

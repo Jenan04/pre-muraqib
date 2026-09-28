@@ -8,6 +8,21 @@ import { renderAiAdvisory } from "./cli/renderers/ai-renderer.js";
 import { renderJsonReport } from "./cli/renderers/json-renderer.js";
 import type { ValidationEngineName } from "./guard/core/engine-detector.js";
 import { runResolveWorkflow } from "./cli/resolve-workflow.js";
+import { DockerImageScanner } from "./scanners/docker/image-engine.js";
+import { DockerRuntimeScanner } from "./scanners/docker/runtime-engine.js";
+import type { ScanResult } from "./core/contracts/scanner-engine.js";
+
+function renderTargetScan(result: ScanResult, json: boolean): number {
+  const exitCode = result.status === "success" ? (result.findings.some(f => f.severity === "high" || f.severity === "critical") ? 1 : 0) : 3;
+  if (json) {
+    console.log(JSON.stringify({ schemaVersion: "1.2", status: exitCode === 3 ? "error" : exitCode === 1 ? "failed" : "passed", exitCode, scannerCoverage: [{ scanner: result.scanner, status: result.status, scannedInputs: result.scannedInputs ?? [], skippedInputs: result.skippedInputs ?? [], diagnostics: result.diagnostics ?? [] }], findings: result.findings }, null, 2));
+  } else {
+    renderFindings(result.findings);
+    console.log(`${result.scanner}: ${result.status}`);
+    for (const diagnostic of result.diagnostics ?? []) console.log(`  ${diagnostic}`);
+  }
+  return exitCode;
+}
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -25,6 +40,9 @@ async function main() {
       ai: {
         type: "boolean",
       },
+      image: { type: "string" },
+      container: { type: "string" },
+      "docker-native": { type: "boolean" },
       help: {
         type: "boolean",
         short: "h",
@@ -41,19 +59,24 @@ async function main() {
     console.log(`Muraqib — local-first DevSecOps audit CLI
 
 Usage:
-  muraqib audit [-e build|prod] [--engine custom|zod|valibot|arktype] [--json] [--ai]
+  muraqib audit [-e build|prod] [--engine custom|zod|valibot|arktype] [--json] [--ai] [--docker-native]
   muraqib resolve
+  muraqib image --image <local-image> [--json]
+  muraqib runtime --container <running-container> [--json]
 
 Options:
   -e, --env       Blocking policy mode (build or prod)
       --engine    Environment validation engine
       --json      Machine-readable output
       --ai        Enable optional AI advisory output
+      --image     Select an existing local Docker image for explicit Trivy analysis
+      --container Select a container for read-only runtime inspection
+      --docker-native Opt in to Docker CLI build and effective Compose checks
   -h, --help      Show this help`);
     return;
   }
 
-  if (command !== "audit" && command !== "resolve") {
+  if (command !== "audit" && command !== "resolve" && command !== "image" && command !== "runtime") {
     throw new Error(`Unknown command '${command}'. Use --help for usage.`);
   }
 
@@ -64,6 +87,17 @@ Options:
   const allowedEngines = new Set(["custom", "zod", "valibot", "arktype"]);
   if (typeof values.engine === "string" && !allowedEngines.has(values.engine)) {
     throw new Error(`Invalid validation engine '${values.engine}'.`);
+  }
+
+  if (command === "image") {
+    if (typeof values.image !== "string") throw new Error("Specify --image with an existing local image.");
+    process.exitCode = renderTargetScan(await new DockerImageScanner().scan(values.image), isJson);
+    return;
+  }
+  if (command === "runtime") {
+    if (typeof values.container !== "string") throw new Error("Specify --container for read-only inspection.");
+    process.exitCode = renderTargetScan(await new DockerRuntimeScanner().scan(values.container), isJson);
+    return;
   }
 
   const context = createProjectContext(process.cwd());
@@ -127,6 +161,7 @@ Options:
       mode: mode === "prod" ? "prod" : "build",
       engine: preferredEngine,
       enableAi: Boolean(values.ai),
+      dockerNative: Boolean(values["docker-native"]),
     });
   } catch (err: unknown) {
     if (spinner) {

@@ -47,6 +47,18 @@ export interface DependencyProblemData {
   resolutionMetadata?: Record<string, unknown> | undefined;
 }
 
+export interface ImageProblemData {
+  imageId: string;
+  target: string;
+  ecosystem: string;
+  package: string;
+  installedVersion: string;
+  advisoryId: string;
+  fixedVersion?: string;
+  severitySource?: string;
+  scannedAt: string;
+}
+
 export interface Finding {
   id: string;
 
@@ -67,4 +79,5 @@ export interface Finding {
   remediation?: string | undefined;
 
   dependencyProblem?: DependencyProblemData | undefined;
+  imageProblem?: ImageProblemData | undefined;
 }

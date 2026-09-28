@@ -155,7 +155,21 @@ Never place real credentials inside `.env.example`.
 - AI explanations may be inaccurate and must not replace deterministic scanners.
 - Rollback restores package metadata and the lockfile, but the installed `node_modules` tree may require a clean reinstall.
 - The project is not yet intended to serve as a complete production security platform.
-- Docker `COPY` analysis checks for sensitive files (`.env`, `.env.local`, `.env.production`) copied into a build stage. It supports `.dockerignore` and `<dockerfile>.dockerignore` applying to the context returned by `docker compose config`. It only claims that the file is copied into *a build stage*, not necessarily the final image (multi-stage tracking is limited). Remote contexts and dynamic contexts are not supported.
+- Docker `COPY` and `ADD` analysis checks for common sensitive files (`.env`, `.env.local`, `.env.production`, `.env.development`) copied into a build stage. It considers the local Compose build context and `.dockerignore`, with `<dockerfile>.dockerignore` taking precedence. It does not prove that a file reaches the final image; only simple local source paths and broad `*` patterns are understood. Remote contexts and dynamic contexts are reported as incomplete.
+
+## Docker checks
+
+```bash
+pnpm build
+node bin/muraqib.js audit --json -e build
+node bin/muraqib.js audit --docker-native --json -e build
+node bin/muraqib.js image --image my-local-image:tag --json
+node bin/muraqib.js runtime --container my-container --json
+```
+
+The ordinary audit reads local Dockerfiles and Compose YAML without invoking the Docker CLI. `--docker-native` explicitly asks Docker to validate builds and resolve effective Compose configuration, including overrides and interpolation. If Compose overrides cannot be merged, the ordinary audit reports partial Docker coverage. The image command requires a local image, Docker Engine, and a separately installed Trivy CLI; it never pulls the image from a registry. Trivy may fetch its advisory database. The runtime command inspects one selected container through Docker Engine without changing it. Image and runtime scans are separate from `audit` and never run implicitly.
+
+Docker status `partial`, `failed`, or `unavailable` means coverage is incomplete; a clean finding list then does not establish safety. Static analysis does not inventory built layers or assess Docker Engine CVEs, daemon policy, or arbitrary build contexts. Dockerfile-specific ignore behavior and complex glob patterns require native verification; the local matcher is approximate. The runtime command reports selected container privileges and namespaces, not every daemon or host control. Exit code 3 denotes failed or unavailable selected scans; code 1 denotes high or critical findings; code 0 denotes no blocking findings in checks that completed.
 
 ---
 
